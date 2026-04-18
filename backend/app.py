@@ -288,12 +288,90 @@ def recommend(user_id):
             if not user_check:
                 return jsonify({"error": "User not found"}), 404
 
-            # Get recommendations
-            query = build_rating_weighted_recommendations(uid, limit)
-            result = session.run(query).single()
+            # 1. Collaborative filtering - movies watched by similar users
+            collab_query = f"""
+            MATCH (target_user:User {{id: '{uid}'}})
+            MATCH (target_user)-[:PREFERS]->(genre:Genre)<-[:PREFERS]-(sim_user:User)
+            WHERE sim_user <> target_user
+            MATCH (sim_user)-[:WATCHED|:LIKED]->(movie:Movie)-[:BELONGS_TO]->(genre)
+            WHERE NOT (target_user)-[:WATCHED|:LIKED]->(movie)
+            WITH movie, count(DISTINCT sim_user) AS score
+            ORDER BY score DESC
+            LIMIT {limit}
+            RETURN COLLECT({{
+                id: movie.id,
+                title: movie.title,
+                year: movie.year,
+                score: score
+            }}) AS collaborative
+            """
+            
+            collab_result = session.run(collab_query).single()
+            collaborative = collab_result["collaborative"] if collab_result else []
 
-        recommendations = result["recommendations"] if result else []
-        return jsonify({"user_id": uid, "recommendations": recommendations})
+            # 2. Content-based filtering - movies in preferred genres
+            content_query = f"""
+            MATCH (target_user:User {{id: '{uid}'}})
+            MATCH (target_user)-[:PREFERS]->(genre:Genre)<-[:BELONGS_TO]-(movie:Movie)
+            WHERE NOT (target_user)-[:WATCHED|:LIKED]->(movie)
+            WITH movie, count(DISTINCT genre) AS genre_match
+            ORDER BY genre_match DESC
+            LIMIT {limit}
+            RETURN COLLECT({{
+                id: movie.id,
+                title: movie.title,
+                year: movie.year,
+                score: genre_match
+            }}) AS content_based
+            """
+            
+            content_result = session.run(content_query).single()
+            content_based = content_result["content_based"] if content_result else []
+
+            # 3. Weighted scoring - combined approach
+            weighted_query = f"""
+            MATCH (target_user:User {{id: '{uid}'}})
+            MATCH (target_user)-[:PREFERS]->(genre:Genre)<-[:PREFERS]-(sim_user:User)
+            WHERE sim_user <> target_user
+            MATCH (sim_user)-[:WATCHED|:LIKED]->(movie:Movie)-[:BELONGS_TO]->(genre)
+            WHERE NOT (target_user)-[:WATCHED|:LIKED]->(movie)
+            WITH movie, count(DISTINCT sim_user) AS similar_users, count(DISTINCT genre) AS shared_genres
+            WITH movie, similar_users, shared_genres, (similar_users * 2 + shared_genres) AS score
+            ORDER BY score DESC
+            LIMIT {limit}
+            RETURN COLLECT({{
+                id: movie.id,
+                title: movie.title,
+                year: movie.year,
+                score: score,
+                similar_users: similar_users,
+                shared_genres: shared_genres
+            }}) AS weighted
+            """
+            
+            weighted_result = session.run(weighted_query).single()
+            weighted_data = weighted_result["weighted"] if weighted_result else []
+            # Restructure to match frontend expectations
+            weighted = [
+                {
+                    "id": item["id"],
+                    "title": item["title"],
+                    "year": item["year"],
+                    "score": item["score"],
+                    "signals": {
+                        "similar_users": item["similar_users"],
+                        "shared_genres": item["shared_genres"]
+                    }
+                }
+                for item in weighted_data
+            ]
+
+        return jsonify({
+            "user_id": uid,
+            "collaborative": collaborative,
+            "content_based": content_based,
+            "weighted": weighted
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -309,15 +387,15 @@ def similar_users(user_id):
             record = session.run(
                 """
                 MATCH (target_user:User {id: $uid})
-                OPTIONAL MATCH (target_user)-[:PREFERS]->(genre:Genre)<-[:PREFERS]-(similar:User)
+                OPTIONAL MATCH (target_user)-[:WATCHED|:LIKED]->(watched_movie:Movie)<-[:WATCHED|:LIKED]-(similar:User)
                 WHERE similar <> target_user
-                WITH similar, count(DISTINCT genre) AS common_genres
-                ORDER BY common_genres DESC
+                WITH similar, count(DISTINCT watched_movie) AS shared_movies
+                ORDER BY shared_movies DESC
                 LIMIT 10
                 RETURN collect({
                     user_id: similar.id,
                     user_name: similar.name,
-                    common_genres: common_genres
+                    similarity: shared_movies
                 }) AS similar_users
                 """,
                 uid=uid,
