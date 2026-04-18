@@ -2,31 +2,34 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>NeoGraphMed</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CineGraphAI - Intelligent Movie Recommendation System</title>
   <link rel="stylesheet" href="css/app.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 
 <header>
-  <h1>NeoGraphMed</h1>
-
-  <!-- ✅ ALL navigation buttons MUST be inside nav -->
+  <h1>🎬 CineGraphAI</h1>
+  
   <nav>
-    <button data-view="add">Add Patient</button>
-    <button data-view="link">Link Disease</button>
-    <button data-view="search">Patient Insights</button>
-    <button id="btnGraph" data-view="graph">Graph View</button>
-
+    <button data-view="addUser">👤 Add User</button>
+    <button data-view="addMovie">🎬 Add Movie</button>
+    <button data-view="link">🔗 Link Activity</button>
+    <button data-view="insights">📊 Insights</button>
+    <button data-view="recommend">🎯 Recommendations</button>
+    <button data-view="import">📤 Import CSV</button>
+    <button data-view="graph">🌐 Graph View</button>
   </nav>
 </header>
 
 <main id="app" class="centered"></main>
 
 <footer>
-  <p>Graph-based Healthcare Intelligence System</p>
+  <p>🚀 Powered by Neo4j Graph Database | AI-Driven Movie Recommendations</p>
+  <p style="font-size: 0.8rem; margin-top: 8px;">Discover connections, explore relationships, and find your next favorite movie</p>
 </footer>
 
-<!-- ✅ D3 MUST load before app.js -->
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script type="module" src="js/app.js"></script>
 

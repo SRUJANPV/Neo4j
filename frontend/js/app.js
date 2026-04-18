@@ -1,1459 +1,1173 @@
-window.addEventListener("unhandledrejection", e => {
-  console.error("❌ UNHANDLED PROMISE:", e.reason);
-  console.trace("STACK TRACE");
-});
-
-
-let graphNodes = [];
-let graphLinks = [];
-let node;
-let link;
-let label;
-let linkLabel;
-let simulation;
-let svg;
-let g;
-let zoom;
-let container;   // ✅ ADD THIS
-
-// =========================
-// 🔧 SAFE STRING NORMALIZER
-// =========================
-function normalize(v) {
-  return String(v || "").trim().toLowerCase();
-}
-
-
-window.safeFindNode = function (name) {
-  const n = graphNodes.find(
-    d => normalize(d.id) === normalize(name) ||
-         normalize(d.name) === normalize(name)
-  );
-
-  if (!n) {
-    console.warn("⚠ Ignored auto-search for missing node:", name);
-    return null; // ⛔ NEVER THROW
-  }
-
-  return n;
-};
-
-
-
-
-
-console.log("✅ app.js loaded");
-
-
-const NODE_COLORS = {
-  Patient: "#22c55e",   // green
-  Disease: "#ef4444",   // red
-  Drug: "#3b82f6",      // blue
-  Gene: "#a855f7",      // purple
-  Symptom: "#f97316"    // orange
-};
-
-
-import { addPatient, linkPatientDisease, getPatientInsights } from "./api.js";
-import { state } from "./state.js";
-// -----------------------------
-// Imports
-// -----------------------------
 import {
+  addMovie,
+  addUser,
+  getGraph,
+  getRecommendations,
+  getSimilarUsers,
+  getUserInsights,
+  importCsv,
+  linkUserMovie
+} from "./api.js";
+import {
+  addMovieView,
+  addUserView,
   dashboardView,
   graphView,
-  addPatientView,
-  linkDiseaseView,
-  searchView,
   importCSVView,
-  riskView
+  insightsView,
+  linkView,
+  recommendationView
 } from "./components.js";
 
-
-// -----------------------------
-// App root
-// -----------------------------
 const app = document.getElementById("app");
 
-// -----------------------------
-// Initial load (VERY IMPORTANT)
-// -----------------------------
-document.addEventListener("DOMContentLoaded", () => {
-  console.log("🔥 DOMContentLoaded fired");
-  app.innerHTML = dashboardView();
-  console.log("🔥 Dashboard HTML injected");
-});
+const NODE_COLORS = {
+  User: "#0f766e",
+  Movie: "#dc2626",
+  Genre: "#2563eb",
+  Actor: "#ea580c",
+  Director: "#7c3aed"
+};
+
+let graphState = {
+  nodes: [],
+  links: [],
+  svg: null,
+  simulation: null,
+  node: null,
+  link: null,
+  label: null,
+  linkLabel: null,
+  zoom: null,
+  selectedNode: null,
+  tooltip: null
+};
+
+// Helper function to show loading state
+function showLoading(elementId, show) {
+  const element = document.getElementById(elementId);
+  if (!element) return;
+  
+  if (show) {
+    const originalContent = element.innerHTML;
+    element.setAttribute('data-original', originalContent);
+    element.innerHTML = '<div class="spinner"></div> Loading...';
+    element.disabled = true;
+  } else {
+    const original = element.getAttribute('data-original');
+    if (original) {
+      element.innerHTML = original;
+      element.removeAttribute('data-original');
+    }
+    element.disabled = false;
+  }
+}
+
+// Helper function to show toast notification
+function showToast(message, type = 'success') {
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `
+    <strong>${type === 'success' ? '✓ Success' : '⚠️ Error'}</strong>
+    <p style="margin-top: 4px; font-size: 0.9rem;">${message}</p>
+  `;
+  document.body.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.style.animation = 'slideOutRight 0.3s ease-out';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+function normalize(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function parseCsvList(text) {
+  return String(text || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function render(view) {
+  app.classList.remove("full-width", "centered");
+  
+  // Add smooth page transition
+  app.style.opacity = '0';
+  setTimeout(() => {
+    if (view === "dashboard") {
+      app.innerHTML = dashboardView();
+      app.classList.add("centered");
+    } else if (view === "addUser") {
+      app.innerHTML = addUserView();
+      app.classList.add("centered");
+    } else if (view === "addMovie") {
+      app.innerHTML = addMovieView();
+      app.classList.add("centered");
+    } else if (view === "link") {
+      app.innerHTML = linkView();
+      app.classList.add("centered");
+    } else if (view === "insights") {
+      app.innerHTML = insightsView();
+      app.classList.add("centered");
+    } else if (view === "recommend") {
+      app.innerHTML = recommendationView();
+      app.classList.add("centered");
+    } else if (view === "import") {
+      app.innerHTML = importCSVView();
+      app.classList.add("centered");
+    } else if (view === "graph") {
+      app.innerHTML = graphView();
+      app.classList.add("full-width");
+      setTimeout(() => loadGraph(), 100);
+    } else {
+      app.innerHTML = dashboardView();
+      app.classList.add("centered");
+    }
+    
+    app.style.opacity = '1';
+  }, 200);
+}
+
+function setStatus(id, text, ok = true) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  
+  el.textContent = text;
+  el.style.color = ok ? "#10b981" : "#ef4444";
+  el.style.background = ok ? "rgba(16, 185, 129, 0.1)" : "rgba(239, 68, 68, 0.1)";
+  el.style.padding = "12px";
+  el.style.borderRadius = "12px";
+  el.style.marginTop = "12px";
+  
+  if (!ok) {
+    showToast(text, 'error');
+  } else {
+    showToast(text, 'success');
+  }
+  
+  setTimeout(() => {
+    if (el) {
+      setTimeout(() => {
+        if (el) el.textContent = '';
+      }, 3000);
+    }
+  }, 3000);
+}
 
 function resetGraphState() {
-  console.log("🧹 HARD resetting graph state");
-
-  // 🛑 Stop simulation completely
-  if (simulation) {
-    simulation.stop();
-    simulation = null;
+  if (graphState.simulation) {
+    graphState.simulation.stop();
   }
-
-  // 🧨 Remove SVG completely (not just contents)
-  d3.selectAll("svg#graphSvg").remove();
-
-  // 🔄 Reset all references
-  graphNodes = [];
-  graphLinks = [];
-  node = null;
-  link = null;
-  label = null;
-  linkLabel = null;
-  g = null;
-  svg = null;
-  zoom = null;
-}
-
-
-
-
-// -----------------------------
-// Header navigation (data-view)
-// -----------------------------
-
-
-
-// --------------------
-// View loader
-// --------------------
-function loadView(view) {
-
-  // 🔄 ALWAYS RESET LAYOUT FIRST
-  app.classList.remove("full-width");
-  app.classList.remove("centered");
-
-  // =========================
-  // DASHBOARD
-  // =========================
-  if (view === "dashboard") {
-    app.innerHTML = dashboardView();
-    app.classList.add("centered");
-    return;
-  }
-
-  // =========================
-  // GRAPH VIEW
-  // =========================
-  if (view === "graph") {
-
-  // 🧨 HARD REMOVE ANY OLD GRAPHS
-  document.querySelectorAll("svg#graphSvg").forEach(svg => svg.remove());
-
-  app.innerHTML = graphView();
-  app.classList.add("full-width");
-
-  setTimeout(() => {
-  loadGraph();
-}, 0);
-
-
-  return;
-}
-
-
-  // =========================
-  // ADD PATIENT
-  // =========================
-  if (view === "add") {
-    app.innerHTML = addPatientView();
-    app.classList.add("centered");
-    return;
-  }
-
-  // =========================
-  // LINK DISEASE
-  // =========================
-  if (view === "link") {
-    app.innerHTML = linkDiseaseView();
-    app.classList.add("centered");
-    return;
-  }
-
-  // =========================
-  // PATIENT INSIGHTS
-  // =========================
-  if (view === "search") {
-    app.innerHTML = searchView();
-    app.classList.add("centered");
-    return;
-  }
-
-  // =========================
-  // IMPORT CSV
-  // =========================
-  if (view === "import") {
-    app.innerHTML = importCSVView();
-    app.classList.add("centered");
-    return;
-  }
-
-  // =========================
-  // RISK VIEW
-  // =========================
-  if (view === "risk") {
-    app.innerHTML = riskView();
-    app.classList.add("centered");
-    return;
-  }
-}
-
-
-window.loadView = loadView;
-
-
-  /* ================================
-     RESET VISUAL STATE
-  ================================ */
-  /*function resetView() {
-    node.style("opacity", 1);
-    text.style("opacity", 1);
-    link.style("opacity", 1);
-    linkLabel.style("opacity", 1);
-  }
-
-   ================================
-     EGO GRAPH HIGHLIGHT (STABLE)
-  ================================ 
-  function highlightEgo(focusNode) {
-  if (!focusNode) return;
-
-  // 1️⃣ Reset visibility
-  node.style("opacity", 1);
-  text.style("opacity", 1);
-  link.style("opacity", 1);
-  linkLabel.style("opacity", 1);
-
-  const neighborIds = new Set();
-  neighborIds.add(focusNode.id);
-
-  const focusName = (focusNode.name || "").toLowerCase();
-
-  // 2️⃣ Collect neighbors (ID OR NAME match)
-  data.links.forEach(l => {
-    const s = l.source.id || l.source;
-    const t = l.target.id || l.target;
-
-    const sNode = typeof l.source === "object" ? l.source : null;
-    const tNode = typeof l.target === "object" ? l.target : null;
-
-    if (
-      s === focusNode.id ||
-      (sNode && sNode.name && sNode.name.toLowerCase() === focusName)
-    ) {
-      neighborIds.add(t);
-    }
-
-    if (
-      t === focusNode.id ||
-      (tNode && tNode.name && tNode.name.toLowerCase() === focusName)
-    ) {
-      neighborIds.add(s);
-    }
-  });
-
-  // 3️⃣ Fade non-neighbors
-  node.style("opacity", d =>
-    neighborIds.has(d.id) ? 1 : 0.25
-  );
-
-  text.style("opacity", d =>
-    neighborIds.has(d.id) ? 1 : 0.25
-  );
-
-  link.style("opacity", l => {
-    const s = l.source.id || l.source;
-    const t = l.target.id || l.target;
-    return neighborIds.has(s) && neighborIds.has(t) ? 1 : 0.25;
-  });
-
-  linkLabel.style("opacity", l => {
-    const s = l.source.id || l.source;
-    const t = l.target.id || l.target;
-    return neighborIds.has(s) && neighborIds.has(t) ? 1 : 0.25;
-  });
-
-  // 4️⃣ Compact ego layout
-  simulation.force("link").distance(l => {
-    const s = l.source.id || l.source;
-    const t = l.target.id || l.target;
-    return s === focusNode.id || t === focusNode.id ? 60 : 140;
-  });
-
-  simulation.alpha(0.7).restart();
-}
-
-
-  /* ================================
-     NODE DETAILS PANEL
-  ================================ */
-  /*function showNodeDetails(nodeData) {
-    const panel = document.getElementById("details-panel");
-    if (!panel) return;
-
-    let html = `<h3>${nodeData.label}</h3><p><strong>${nodeData.name || nodeData.pid || nodeData.id}</strong></p><ul>`;
-
-    data.links.forEach(l => {
-      if (l.source.id === nodeData.id) {
-        html += `<li>${l.type} → ${l.target.name || l.target.pid || l.target.id}</li>`;
-      }
-      if (l.target.id === nodeData.id) {
-        html += `<li>${l.type} ← ${l.source.name || l.source.pid || l.source.id}</li>`;
-      }
-    });
-
-    html += "</ul>";
-    panel.innerHTML = html;
-  }*/
-
-  /* ================================
-     SEARCH (FIND BUTTON)
-  ================================ */
-
-
-  
-
-
-
-document.addEventListener("click", async (e) => {
-  console.log("🖱 Clicked:", e.target.id);
- 
-    // 🌐 SPA NAVIGATION (data-view buttons)
-  const navBtn = e.target.closest("button[data-view]");
-  if (navBtn) {
-    const view = navBtn.dataset.view;
-    console.log("➡️ Navigating to view:", view);
-    loadView(view);
-    return;
-  }
-
-
-     // ========================
-  // 👥 FIND SIMILAR PATIENTS
-  // ========================
-  if (e.target.id === "similarBtn") {
-
-  if (!graphNodes || graphNodes.length === 0) {
-    alert("Please load the graph first");
-    return;
-  }
-
-  const pid = document.getElementById("nodeSearch")?.value.trim();
-
-if (!pid) {
-  alert("Please enter a Patient ID (e.g., Ravi, P1)");
-  return;
-}
-
-  if (!pid) {
-    document.getElementById("similarStatus").innerText =
-      "⚠ Enter Patient ID in search box";
-    return;
-  }
-
-  document.getElementById("similarStatus").innerText =
-    "Calculating similarity...";
-
-  fetchSimilarPatients(pid);
-  return;
-}
-
-
-
-  if (e.target.id === "resetFilterBtn") {
-  if (!node || !link || !label || !linkLabel) {
-    alert("Please load the graph first");
-    return;
-  }
-
-  // 🔄 RESET EVERYTHING — NO DIMMING
-  node.style("opacity", 1);
-  label.style("opacity", 1);
-  link.style("opacity", 1);
-  linkLabel.style("opacity", 1);
-
-  document.getElementById("relFilter").value = "";
-  console.log("✅ Filter reset (no symptom dimming)");
-  return;
-}
-
-
-  if (e.target.id === "cleanLayoutBtn") {
-
-
-  if (!simulation) {
-    alert("Please load the graph first");
-    return;
-  }
-
-  console.log("🧹 Cleaning layout");
-
-  // release dragged nodes
-  graphNodes.forEach(d => {
-    d.fx = null;
-    d.fy = null;
-  });
-
-  // restart physics smoothly
-  simulation
-    .alpha(0.8)
-    .restart();
-
-  return;
-}
-
-
-  if (e.target.id === "clusterPatientsBtn") {
-
-  if (!simulation) {
-    alert("Please load the graph first");
-    return;
-  }
-
-  console.log("🧠 Clustering patients");
-
-  simulation
-    .force(
-      "x",
-      d3.forceX(d => {
-        if (d.label === "Patient") return 300;
-        if (d.label === "Disease") return 700;
-        return 1000;
-      }).strength(0.35)
-    )
-    .force(
-      "y",
-      d3.forceY(d => {
-        if (d.label === "Patient") return 300;
-        if (d.label === "Disease") return 500;
-        return 400;
-      }).strength(0.35)
-    )
-    .alpha(1)
-    .restart();
-
-  return;
-}
-
-
-
-  if (e.target.id === "resetViewBtn") {
-
-  if (!svg || !g || !zoom) {
-    alert("Graph not loaded");
-    return;
-  }
-
-  console.log("🔄 Reset View (zoom & pan only)");
-
-  // 1️⃣ RESET ONLY ZOOM & PAN (CAMERA RESET)
-  svg
-    .transition()
-    .duration(600)
-    .call(zoom.transform, d3.zoomIdentity);
-
-  // 2️⃣ RESET VISIBILITY ONLY
-  node.style("opacity", 1);
-  link.style("opacity", 1);
-  label.style("opacity", 1);
-  linkLabel.style("opacity", 1);
-
-  return;
-}
-
-
-  /* =====================================================
-     🌐 SPA NAVIGATION USING data-view (TOP PRIORITY)
-     (Dashboard buttons + Navbar buttons)
-  ===================================================== */
-  
-
-
-  /* ========================
-     🔗 LINK DISEASE
-  ========================= */
-  if (e.target.id === "linkDisease") {
-
-    const pid = document.getElementById("pid")?.value;
-    const disease = document.getElementById("disease")?.value;
-    const statusEl = document.getElementById("status");
-
-    if (!pid || !disease) {
-      alert("Patient ID and Disease are required");
-      return;
-    }
-
-    statusEl.innerText = "Linking disease...";
-
-    const res = await fetch("http://127.0.0.1:5000/link_patient_disease", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pid, disease })
-    });
-
-    const data = await res.json();
-    statusEl.innerText = data.status;
-    statusEl.style.color = "green";
-    return;
-  }
-
-  /* ========================
-     🔍 PATIENT INSIGHTS
-  ========================= */
-if (e.target.id === "searchPatient") {
-
-  const pid = document.getElementById("pid").value;
-  const result = document.getElementById("result");
-  result.innerText = "Loading...";
-
-  try {
-    const res = await fetch(`http://127.0.0.1:5000/patient_insights/${pid}`);
-    if (!res.ok) throw new Error();
-
-    const data = await res.json();
-
-    result.innerHTML = `
-      <b>Name:</b> ${data.patient_name}<br>
-      <b>ID:</b> ${data.patient_id}<br>
-      <b>Diseases:</b> ${data.diseases.join(", ") || "None"}<br>
-      <b>Drugs:</b> ${data.drugs.join(", ") || "None"}<br>
-      <b>Genes:</b> ${data.genes.join(", ") || "None"}
-    `;
-
-    // 🔵 OPTIONAL graph highlight
-    result.innerHTML += `
-  <br><br>
-  <button class="graph-btn" onclick="openGraphAndFocus('${pid}')">
-  🔍 View in Graph
-</button>
-
-`;
-
-
-  } catch {
-    result.innerText = "❌ Error fetching patient insights";
-  }
-
-  return;
-}
-
-  /* ========================
-   📄 CSV FILE NAME DISPLAY (STABLE)
-========================= */
-if (
-  e.target.id === "csvFile" ||
-  e.target.classList.contains("file-upload-text") ||
-  e.target.closest(".file-upload")
-) {
-
-  const input = document.getElementById("csvFile");
-
-  if (input && !input.dataset.listenerAttached) {
-    input.dataset.listenerAttached = "true";
-
-    input.addEventListener("change", ev => {
-      const label = document.querySelector(".file-upload-text");
-      if (label) {
-        label.textContent =
-          ev.target.files[0]?.name || "📄 Choose CSV file";
-      }
-    });
-  }
-}
-
-
-
-
-  /* ========================
-     📁 IMPORT CSV
-  ========================= */
-  if (e.target.id === "uploadCSV") {
-
-    const file = document.getElementById("csvFile")?.files[0];
-    if (!file) {
-      alert("Please select a CSV file");
-      return;
-    }
-
-    const form = new FormData();
-    form.append("file", file);
-
-    await fetch("http://127.0.0.1:5000/import_csv", {
-  method: "POST",
-  body: form
-});
-
-
-    document.getElementById("csvStatus").innerText =
-      "CSV imported successfully ✅";
-    return;
-  }
-
-
-
-  
-  if (e.target.id === "calculateRisk") {
-  const pid = document.getElementById("riskPid").value;
-  const result = document.getElementById("riskResult");
-
-  if (!pid) {
-    result.innerHTML = "❌ Please enter Patient ID";
-    return;
-  }
-
-  // Dummy logic (replace later with backend)
-  const score = Math.floor(Math.random() * 40) + 60;
-
-  result.innerHTML = `
-    <b>Patient:</b> ${pid}<br>
-    <b>Risk Score:</b> ${score}%<br>
-    <b>Status:</b> ${score > 75 ? "High Risk 🔴" : "Moderate Risk 🟡"}
-  `;
-}
-
-
-  /* ========================
-     🔄 REFRESH GRAPH
-  ========================= */
-  if (e.target.id === "refreshGraph") {
-    console.log("🔄 Refresh Graph clicked");
-    loadGraph();
-    return;
-  }
- 
-  if (e.target.id === "searchBtn") {
-    const value = document.getElementById("searchInput").value.trim();
-    if (value) {
-      searchNodeAndShowEgo(value);
-    }
-  }
-
-  // 🔍 GRAPH VIEW SEARCH (THIS IS THE FIX)
-if (e.target.id === "graphSearchBtn") {
-  const value = document
-    .getElementById("graphSearchInput")
-    .value
-    .trim();
-
-  if (!value) return;
-
-  highlightGraphNode(value);
-}
-
- // 🔍 GRAPH VIEW SEARCH
-  if (e.target.id === "findNode") {
-
-  if (!node || !link || !label || graphNodes.length === 0) {
-    alert("Please load the graph first");
-    return;
-  }
-
-  const rawQuery = document
-  .getElementById("nodeSearch")
-  .value
-  .trim();
-
-if (!rawQuery) {
-  alert("Please enter a node name (e.g., P1, Fever, Paracetamol)");
-  return;
-}
-
-const query = normalize(rawQuery);
-
-// ✅ This allows: P1 → Patient:P1
-const targetNode = graphNodes.find(n => {
-  const id = normalize(n.id);     // patient:p1
-  return (
-    id === query ||               // exact match
-    id.endsWith(":" + query)      // P1 → Patient:P1
-  );
-});
-
-if (!targetNode) {
-  alert("Node not found in graph");
-  return;
-}
-
-
-  if (!targetNode) {
-    alert("Node not found in graph");
-    return;
-  }
-
-  // Fade all
-  node.style("opacity", 0.15).attr("stroke", null);
-  link.style("opacity", 0.05);
-  label.style("opacity", 0.15);
-
-  // Highlight selected node
-  node
-    .filter(d => d.id === targetNode.id)
-    .style("opacity", 1)
-    .attr("stroke", "#000")
-    .attr("stroke-width", 3);
-
-  // Highlight connected links
-  link
-    .filter(d =>
-      d.source.id === targetNode.id ||
-      d.target.id === targetNode.id
-    )
-    .style("opacity", 1)
-    .attr("stroke", "#000");
-
-  // Highlight connected nodes
-  node
-    .filter(d =>
-      graphLinks.some(l =>
-        (l.source.id === targetNode.id && l.target.id === d.id) ||
-        (l.target.id === targetNode.id && l.source.id === d.id)
-      )
-    )
-    .style("opacity", 1);
-}
-
-
-if (e.target.id === "riskBtn") {
-  app.innerHTML = riskView();
-  app.classList.remove("full-width");
-  app.classList.add("centered");
-  return;
-}
-
-
-  /* ========================
-     ⬅ BACK TO DASHBOARD
-  ========================= */
-  if (e.target.id === "backDashboard") {
-  app.innerHTML = dashboardView();
-
-  // 🔄 RESET LAYOUT STATE COMPLETELY
-  app.classList.remove("full-width");
-  app.classList.remove("centered");
-
-  return;
-}
-
-
-  /* ========================
-   GRAPH TOOLBAR BUTTONS
-======================== */
-
-
-});
-
-
-
-async function loadGraph() {
-  console.log("🔥 loadGraph called");
-
-  
-  // ✅ HARD RESET FIRST
-  resetGraphState();
-
-  container = document.getElementById("graph-container");
-
-  
-
-if (!container) {
-  console.warn("Graph container not found");
-  return;
-}
-
-const width = container.clientWidth;
-  const height = Math.max(container.clientHeight, 600);
-// ❌ Remove any existing SVG (double safety)
-container.querySelectorAll("svg").forEach(s => s.remove());
-
-// ✅ Create fresh SVG
-svg = d3.select(container)
-  .append("svg")
-  .attr("id", "graphSvg")
-  .attr("data-graph", "main");
-
-// =========================
-// 🔒 CLIP GRAPH TO CONTAINER
-// =========================
-const clipId = "graph-clip";
-
-svg.append("defs")
-  .append("clipPath")
-  .attr("id", clipId)
-  .append("rect")
-  .attr("x", 0)
-  .attr("y", 0)
-  .attr("width", width)
-  .attr("height", height);
-
-  if (svg.empty()) {
-    console.warn("Graph SVG not found");
-    return;
-  }
-
-  // 🔴 FIX 5: SAFETY RESET (CORRECT LOCATION)
-
-  // ✅ SINGLE ROOT GROUP
-  g = svg.append("g")
-  .attr("class", "graph-root")
-  .attr("clip-path", "url(#graph-clip)");
-
-
-
-  if (!container || svg.empty()) {
-    console.warn("Graph container or SVG not found");
-    return;
-  }
-
-  
-
-
-  svg
-    .attr("width", width)
-    .attr("height", height);
-
-
-zoom = d3.zoom()
-  .scaleExtent([0.4, 4])
-  .on("zoom", (event) => {
-    g.attr("transform", event.transform);
-  });
-
-// attach zoom ONCE
-svg.call(zoom);
-
-
-
-
-
-  // 🔹 Fetch graph data
-  const res = await fetch("http://127.0.0.1:5000/graph");
-  const data = await res.json();
-
-  console.log("Graph data:", data);
-  const nodes = data.nodes;
-  const links = data.links;
-
-  // 🧼 CLEAR any pinned positions (fix frozen nodes)
-nodes.forEach(n => {
-  n.fx = null;
-  n.fy = null;
-});
-
-
-  if (!data.nodes || !data.links || data.nodes.length === 0) return;
-   
-  graphNodes = nodes;
-  graphLinks = links;
-
-
-// =========================
-// 🔧 FIX LINK → NODE ID MISMATCH
-// =========================
-const nodeIdMap = new Map();
-
-// map normalized name → actual node id
-// map normalized values → actual node id
-nodes.forEach(n => {
-
-  // 1️⃣ From name (Drug:Paracetamol, Patient:P1, etc.)
-  if (n.name) {
-    const rawName = n.name.includes(":")
-      ? n.name.split(":")[1]
-      : n.name;
-
-    nodeIdMap.set(normalize(rawName), n.id);
-  }
-
-  // 2️⃣ From patient_id (P001, P1, etc.)
-  if (n.patient_id) {
-    nodeIdMap.set(normalize(n.patient_id), n.id);
-  }
-
-});
-
-
-// rewrite links to use correct node IDs
-links.forEach(l => {
-  if (typeof l.source === "string") {
-    const fixed = nodeIdMap.get(normalize(l.source));
-    if (fixed) l.source = fixed;
-  }
-
-  if (typeof l.target === "string") {
-    const fixed = nodeIdMap.get(normalize(l.target));
-    if (fixed) l.target = fixed;
-  }
-});
-
-
-
-  console.log("✅ Graph nodes loaded:", graphNodes.length);
-  // =========================
-  // FORCE SIMULATION
-  // =========================
-  simulation = d3.forceSimulation(graphNodes)
-
-    .force(
-      "link",
-      d3.forceLink(data.links)
-        .id(d => d.id)
-        .distance(140)
-    )
-    .force("charge", d3.forceManyBody().strength(-450))
-    .force("center", d3.forceCenter(width / 2, height / 2))
-    // ❌ REMOVE collision FOR NOW
-// .force("collision", d3.forceCollide().radius(d => d.radius + 4));
-
-
-
-  // =========================
-  // LINKS
-  // =========================
-  link = g.append("g")
-  .selectAll("line")
-  .data(data.links, d => {
-  const s = d.source.id || d.source;
-  const t = d.target.id || d.target;
-  return `${s}-${t}-${d.type}`;
-})
-
-  .join("line")
-  .attr("stroke", "#aaa")
-  .attr("stroke-width", 1.4);
-
-linkLabel = g.append("g")
-  .selectAll("text")
-  .data(data.links, d => {
-  const s = d.source.id || d.source;
-  const t = d.target.id || d.target;
-  return `${s}-${t}-${d.type}`;
-})
-
-  .join("text")
-
-  .text(d => d.type)
-  .attr("font-size", "9px")
-  .attr("fill", "#444")
-  .attr("text-anchor", "middle")
-  .attr("class", "link-label");
-
-
-  node = g.append("g")
-  .selectAll("circle")
-  .data(nodes, d => d.id)   // ✅ KEY FIX
-  .join("circle")
-  .attr("class", "graph-node")
-  
-  .attr("r", d => {
-  d.radius =
-    d.label === "Patient" ? 12 :
-    d.label === "Disease" ? 14 :
-    d.label === "Drug" ? 13 :
-    d.label === "Gene" ? 12 :
-    d.label === "Symptom" ? 11 :
-    12;
-  return d.radius;
-})
-.attr("fill", d => NODE_COLORS[d.label] || "#64748b")
-.attr("stroke", "#ffffff")
-.attr("stroke-width", 1.5);
-
-// ✅ NOW radius exists — SAFE to add collision
-simulation.force(
-  "collision",
-  d3.forceCollide().radius(d => d.radius + 6)
-);
-
-// 🔄 restart physics so it takes effect
-simulation.alpha(1).restart();
-
-// 🔕 DIM SYMPTOM NODES BY DEFAULT (PRESENTATION MODE)
-// 🔕 DIM SYMPTOMS BY DEFAULT (NODES + LABELS)
-node.style("opacity", d =>
-  d.label === "Symptom" ? 0.15 : 1
-);
-
-
-
-
-  node
-  .on("mouseover", function () {
-    d3.select(this)
-      .attr("stroke", "#000")
-      .attr("stroke-width", 2.5);
-  })
-  .on("mouseout", function () {
-    d3.select(this)
-      .attr("stroke", "#fff")
-      .attr("stroke-width", 1.5);
-  });
-
-  // 🟢 ENABLE NODE DRAGGING
-   node.call(
-  d3.drag()
-    .on("start", dragstarted)
-    .on("drag", dragged)
-    .on("end", dragended)
-  );
-
-
-label = g.append("g")
-  .selectAll("text")
-  .data(nodes, d => d.id)
-  .join("text")
-  .text(d => {
-  // d.name is like "Disease:Fever"
-  return d.name.split(":")[1] || d.name;
-})
-
-  .attr("font-size", "10px")
-  .attr("text-anchor", "middle");
-
-  // ✅ DIM SYMPTOMS BY DEFAULT (SAFE LOCATION)
-node.style("opacity", d =>
-  d.label === "Symptom" ? 0.15 : 1
-);
-
-label.style("opacity", d =>
-  d.label === "Symptom" ? 0.15 : 1
-);
-
-
-node.on("click", (event, d) => {
-  event.stopPropagation();
-  showNodeDetails(d);
-});
-
-
-svg.on("click", () => {
-  const panel = document.getElementById("details-panel");
-  if (panel) {
-    panel.innerHTML = "Click a node to see details";
-  }
-});
-
-
-  // =========================
-  // NODES
-  // =========================
-  
-  // =========================
-  // TICK — KEEP NODES INSIDE BOX
-  // =========================
-  console.log("node:", node);
-console.log("label:", label);
-console.log("link:", link);
-console.log("linkLabel:", linkLabel);
-
-
-  simulation.on("tick", () => {
-
-  const padding = 10;
-
-  node
-    .attr("cx", d => {
-      d.x = Math.max(
-        d.radius + padding,
-        Math.min(width - d.radius - padding, d.x)
-      );
-      return d.x;
-    })
-    .attr("cy", d => {
-      d.y = Math.max(
-        d.radius + padding,
-        Math.min(height - d.radius - padding, d.y)
-      );
-      return d.y;
-    });
-
-  label
-    .attr("x", d => d.x)
-    .attr("y", d => d.y + d.radius + 10); // 👈 BELOW the node
-
-  link
-    .attr("x1", d => d.source.x)
-    .attr("y1", d => d.source.y)
-    .attr("x2", d => d.target.x)
-    .attr("y2", d => d.target.y);
-
-  linkLabel
-    .attr("x", d => (d.source.x + d.target.x) / 2)
-    .attr("y", d => (d.source.y + d.target.y) / 2);
-});
-
-
-// =========================
-// 🔽 RELATIONSHIP FILTER
-// =========================
-const relFilter = document.getElementById("relFilter");
-
-if (relFilter) {
-  relFilter.onchange = () => {
-    const selectedRel = relFilter.value;
-
-    // 🔁 RESET — SHOW EVERYTHING
-    if (!selectedRel) {
-      link.style("opacity", 1);
-      linkLabel.style("opacity", 1);
-      node.style("opacity", 1);
-      label.style("opacity", 1);
-      return;
-    }
-
-    // 🔗 FILTER LINKS
-    link.style("opacity", d =>
-      d.type === selectedRel ? 1 : 0.05
-    );
-
-    linkLabel.style("opacity", d =>
-      d.type === selectedRel ? 1 : 0.05
-    );
-
-    // 🎯 FIND CONNECTED NODES
-    const connectedNodes = new Set();
-
-    graphLinks.forEach(l => {
-      if (l.type === selectedRel) {
-        connectedNodes.add(l.source.id || l.source);
-        connectedNodes.add(l.target.id || l.target);
-      }
-    });
-
-    // 🟢 SHOW ONLY CONNECTED NODES
-    node.style("opacity", d =>
-      connectedNodes.has(d.id) ? 1 : 0.1
-    );
-
-    label.style("opacity", d =>
-      connectedNodes.has(d.id) ? 1 : 0.1
-    );
+  graphState = {
+    nodes: [],
+    links: [],
+    svg: null,
+    simulation: null,
+    node: null,
+    link: null,
+    label: null,
+    linkLabel: null,
+    zoom: null,
+    selectedNode: null,
+    tooltip: null
   };
 }
 
-
-  // =========================
-  // DRAG FUNCTIONS
-  // =========================
-  function dragstarted(event, d) {
-    if (!event.active) simulation.alphaTarget(0.3).restart();
-    d.fx = d.x;
-    d.fy = d.y;
-  }
-
-  function dragged(event, d) {
-    d.fx = event.x;
-    d.fy = event.y;
-  }
-
-  function dragended(event, d) {
-    if (!event.active) simulation.alphaTarget(0);
-    d.fx = null;
-    d.fy = null;
-  }
-
-  // 🔓 FORCE RESET VISIBILITY AFTER LOAD
-setTimeout(() => {
-  if (node && link && label && linkLabel) {
-    node.style("opacity", 1);
-    link.style("opacity", 1);
-    label.style("opacity", 1);
-    linkLabel.style("opacity", 1);
-  }
-}, 0);
-
-// 🚫 BLOCK ANY LEGACY AUTO-SEARCH
-window.focusNode = () => {};
-window.highlightNode = () => {};
-window.findNodeByName = () => {};
-
+function getSelectedUserId() {
+  const node = graphState.selectedNode;
+  if (!node || node.label !== "User") return null;
+  return String(node.id || "").split(":").pop() || null;
 }
 
-
-async function fetchSimilarPatients(pid) {
-  try {
-    const res = await fetch(
-      `http://127.0.0.1:5000/similar_patients/${encodeURIComponent(pid)}`
-    );
-    const data = await res.json();
-
-    const similar = data.similar_patients || [];
-
-    // ✅ MOVE THESE TO THE TOP (FIX)
-    const status = document.getElementById("similarStatus");
-    const list = document.getElementById("similarList");
-
-    status.innerText = "";
-    list.innerHTML = "";
-
-    // ❌ NO SIMILAR PATIENTS
-    if (similar.length === 0) {
-      alert("No similar patients found for this patient.");
-      return;
-    }
-
-    // ✅ SHOW SIMILAR PATIENTS
-    status.innerText = "Patients with shared diseases:";
-
-
-    similar.forEach(p => {
-      const li = document.createElement("li");
-      li.innerText = p;
-      //li.onclick = () => searchNodeAndShowEgo(p);
-      list.appendChild(li);
-    });
-
-    // 🔦 GRAPH HIGHLIGHT
-    d3.selectAll(".graph-node")
-      .attr("opacity", d => {
-        if (d.label !== "Patient") return 0.15;
-        if (d.id === pid) return 1;
-        if (similar.includes(d.id)) return 1;
-        return 0.15;
-      })
-      .attr("stroke", d =>
-        similar.includes(d.id) ? "#f1c40f" : "none"
-      )
-      .attr("stroke-width", d =>
-        similar.includes(d.id) ? 4 : 0
-      );
-
-  } catch (err) {
-    console.error(err);
-    document.getElementById("similarStatus").innerText =
-      "Error calculating similarity";
-  }
+function resetGraphView() {
+  if (!graphState.svg || !graphState.zoom) return;
+  
+  graphState.svg
+    .transition()
+    .duration(500)
+    .call(graphState.zoom.transform, d3.zoomIdentity);
 }
 
-
-
-function searchNodeAndShowEgo(nodeName) {
-  console.log("🔍 Searching for:", nodeName);
-
-  const targetNode = graphNodes.find(n =>
-  normalize(n.id) === normalize(nodeName) ||
-  normalize(n.name) === normalize(nodeName)
-);
-
-
-
-  console.log("🔍 Searching for:", nodeName);
-  console.log("📦 Graph nodes:", graphNodes.map(n => ({
-  id: n.id,
-  name: n.name,
-  patient_id: n.patient_id
-})));
-
-
-
-  if (!targetNode) {
-  console.warn("⚠ Ignoring ego search for missing node:", nodeName);
-  return; // ⛔ SILENT FAIL — NO ERROR, NO PROMISE REJECT
-}
-
-
-
-  // Collect connected node IDs
-  const connectedNodeIds = new Set();
-  connectedNodeIds.add(targetNode.id);
-
-  graphLinks.forEach(link => {
-    const s = link.source.id || link.source;
-    const t = link.target.id || link.target;
-
-    if (s === targetNode.id || t === targetNode.id) {
-      connectedNodeIds.add(s);
-      connectedNodeIds.add(t);
-    }
+function cleanGraphLayout() {
+  if (!graphState.simulation) return;
+  
+  graphState.nodes.forEach((n) => {
+    n.fx = null;
+    n.fy = null;
   });
-
-  // 🔵 Show / hide nodes
-  d3.selectAll(".graph-node")
-    .attr("opacity", d =>
-      connectedNodeIds.has(d.id) ? 1 : 0.1
-    );
-
-  // 🔗 Show / hide links
-  d3.selectAll("line")
-    .attr("opacity", d => {
-      const s = d.source.id || d.source;
-      const t = d.target.id || d.target;
-      return (s === targetNode.id || t === targetNode.id) ? 1 : 0.05;
-    });
-
-  // 🏷️ Link labels (if you added them)
-  d3.selectAll(".link-label")
-    .attr("opacity", d => {
-      const s = d.source.id || d.source;
-      const t = d.target.id || d.target;
-      return (s === targetNode.id || t === targetNode.id) ? 1 : 0.05;
-    });
-
-  console.log("✅ Ego network shown for:", targetNode.id);
+  
+  graphState.simulation.force("xCluster", null);
+  graphState.simulation.force("yCluster", null);
+  graphState.simulation.alpha(0.5).restart();
+  
+  showToast("Layout cleaned and repositioned", "success");
 }
 
-function highlightGraphNode(searchText) {
-  const query = searchText.toLowerCase();
+function clusterGraphNodes() {
+  if (!graphState.simulation || !graphState.svg) return;
+  
+  const width = Number(graphState.svg.attr("width")) || 1000;
+  const height = Number(graphState.svg.attr("height")) || 700;
+  
+  const targetX = {
+    User: width * 0.2,
+    Movie: width * 0.5,
+    Genre: width * 0.78,
+    Actor: width * 0.82,
+    Director: width * 0.65
+  };
+  
+  const targetY = {
+    User: height * 0.25,
+    Movie: height * 0.5,
+    Genre: height * 0.25,
+    Actor: height * 0.75,
+    Director: height * 0.7
+  };
+  
+  graphState.simulation
+    .force("xCluster", d3.forceX((d) => targetX[d.label] || width * 0.5).strength(0.25))
+    .force("yCluster", d3.forceY((d) => targetY[d.label] || height * 0.5).strength(0.25))
+    .alpha(0.9)
+    .restart();
+  
+  showToast("Clustering nodes by category", "success");
+}
 
-  // 1️⃣ Find the target node
-  const target = graphNodes.find(n =>
-  normalize(n.id) === normalize(searchText) ||
-  normalize(n.name) === normalize(searchText)
-);
+function findNode(query) {
+  const q = normalize(query);
+  return graphState.nodes.find((n) => {
+    const id = normalize(n.id);
+    const name = normalize(n.name || "");
+    return id === q || id.endsWith(`:${q}`) || name === q;
+  });
+}
 
+function resetGraphVisibility() {
+  if (!graphState.node) return;
+  
+  graphState.node.transition()
+    .duration(300)
+    .style("opacity", 1)
+    .attr("stroke", "#ffffff")
+    .attr("stroke-width", 1.5);
+    
+  graphState.link.transition()
+    .duration(300)
+    .style("opacity", 0.85)
+    .attr("stroke", "#9ca3af");
+    
+  graphState.label.transition()
+    .duration(300)
+    .style("opacity", 1);
+    
+  graphState.linkLabel.transition()
+    .duration(300)
+    .style("opacity", 0.85);
+  
+  const panel = document.getElementById("details-panel");
+  if (panel) {
+    panel.innerHTML = "✨ Click any node to explore its connections and relationships";
+  }
+}
 
-  if (!target) {
-    console.log("Node not found:", searchText);
+function findGraphNodeById(id) {
+  return graphState.nodes.find((n) => n.id === id);
+}
+
+function showNodesByCategory(category) {
+  if (!graphState.nodes.length || !graphState.node) return;
+  
+  const matchingNodes = graphState.nodes.filter((n) => n.label === category);
+  const ids = new Set(matchingNodes.map((n) => n.id));
+  
+  graphState.node.transition()
+    .duration(300)
+    .style("opacity", (d) => ids.has(d.id) ? 1 : 0.15)
+    .attr("stroke", "#ffffff")
+    .attr("stroke-width", 1.5);
+    
+  graphState.label.transition()
+    .duration(300)
+    .style("opacity", (d) => ids.has(d.id) ? 1 : 0.15);
+    
+  graphState.link.transition()
+    .duration(300)
+    .style("opacity", (d) => {
+      const source = d.source.id || d.source;
+      const target = d.target.id || d.target;
+      return ids.has(source) || ids.has(target) ? 0.85 : 0.08;
+    });
+    
+  graphState.linkLabel.transition()
+    .duration(300)
+    .style("opacity", (d) => {
+      const source = d.source.id || d.source;
+      const target = d.target.id || d.target;
+      return ids.has(source) || ids.has(target) ? 0.85 : 0.08;
+    });
+  
+  const panel = document.getElementById("details-panel");
+  if (panel) {
+    panel.innerHTML = `
+      <h4>📌 ${category} Nodes (${matchingNodes.length})</h4>
+      <ul style="max-height: 300px; overflow-y: auto;">
+        ${matchingNodes.map((n) => `<li>🎬 ${n.name || n.id}</li>`).join("")}
+      </ul>
+    `;
+  }
+}
+
+async function applyGraphFocusFilter(mode) {
+  if (!mode) {
+    resetGraphVisibility();
     return;
   }
+  
+  if (mode === "actors") {
+    const rels = new Set(["ACTED_IN"]);
+    const visibleNodes = new Set();
+    
+    graphState.links.forEach((l) => {
+      const source = l.source.id || l.source;
+      const target = l.target.id || l.target;
+      if (rels.has(l.type)) {
+        visibleNodes.add(source);
+        visibleNodes.add(target);
+      }
+    });
+    
+    graphState.link.transition()
+      .duration(300)
+      .style("opacity", (d) => rels.has(d.type) ? 1 : 0.06);
+      
+    graphState.linkLabel.transition()
+      .duration(300)
+      .style("opacity", (d) => rels.has(d.type) ? 1 : 0.06);
+      
+    graphState.node.transition()
+      .duration(300)
+      .style("opacity", (d) => visibleNodes.has(d.id) ? 1 : 0.1);
+      
+    graphState.label.transition()
+      .duration(300)
+      .style("opacity", (d) => visibleNodes.has(d.id) ? 1 : 0.1);
+      
+    showToast("Showing only actor relationships", "success");
+    return;
+  }
+  
+  if (mode === "recommendations") {
+    const selectedUser = getSelectedUserId();
+    if (!selectedUser) {
+      showToast("Select a User node first to highlight recommended movies", "error");
+      const focus = document.getElementById("graphFocusFilter");
+      if (focus) focus.value = "";
+      resetGraphVisibility();
+      return;
+    }
+    
+    showLoading('refreshGraph', true);
+    let data;
+    try {
+      data = await getRecommendations(selectedUser);
+    } catch {
+      showLoading('refreshGraph', false);
+      return;
+    }
+    showLoading('refreshGraph', false);
+    
+    const recommendedIds = new Set(
+      (data.weighted || []).map((item) => `Movie:${String(item.movie_id || "").toLowerCase()}`)
+    );
+    const userNodeId = `User:${selectedUser}`;
+    
+    graphState.node.transition()
+      .duration(300)
+      .style("opacity", (d) => (d.id === userNodeId || recommendedIds.has(d.id)) ? 1 : 0.1)
+      .attr("stroke", (d) => recommendedIds.has(d.id) ? "#f59e0b" : "#ffffff")
+      .attr("stroke-width", (d) => recommendedIds.has(d.id) ? 3 : 1.5);
+      
+    graphState.label.transition()
+      .duration(300)
+      .style("opacity", (d) => (d.id === userNodeId || recommendedIds.has(d.id)) ? 1 : 0.1);
+      
+    graphState.link.transition()
+      .duration(300)
+      .style("opacity", 0.05);
+      
+    graphState.linkLabel.transition()
+      .duration(300)
+      .style("opacity", 0.05);
+    
+    const panel = document.getElementById("details-panel");
+    if (panel) {
+      panel.innerHTML = `
+        <h4>🎯 Recommended Movies for ${selectedUser}</h4>
+        <ul>
+          ${(data.weighted || [])
+            .map((item) => `<li><strong>${item.title}</strong> (${item.year || "N/A"}) - score ${item.score}</li>`)
+            .join("") || "<li>No recommendations available</li>"}
+        </ul>
+      `;
+    }
+    
+    showToast(`Found ${data.weighted?.length || 0} recommendations for ${selectedUser}`, "success");
+    return;
+  }
+  
+  if (mode === "similar_users") {
+    const selectedUser = getSelectedUserId();
+    if (!selectedUser) {
+      showToast("Select a User node first to highlight similar users", "error");
+      const focus = document.getElementById("graphFocusFilter");
+      if (focus) focus.value = "";
+      resetGraphVisibility();
+      return;
+    }
+    
+    showLoading('refreshGraph', true);
+    let data;
+    try {
+      data = await getSimilarUsers(selectedUser);
+    } catch {
+      showLoading('refreshGraph', false);
+      return;
+    }
+    showLoading('refreshGraph', false);
+    
+    const userNodeId = `User:${selectedUser}`;
+    const similarIds = new Set((data.similar_users || []).map((u) => `User:${u.user_id}`));
+    const context = new Set([userNodeId, ...similarIds]);
+    
+    graphState.node.transition()
+      .duration(300)
+      .style("opacity", (d) => context.has(d.id) ? 1 : 0.1)
+      .attr("stroke", (d) => similarIds.has(d.id) ? "#111827" : "#ffffff")
+      .attr("stroke-width", (d) => similarIds.has(d.id) ? 3 : 1.5);
+      
+    graphState.label.transition()
+      .duration(300)
+      .style("opacity", (d) => context.has(d.id) ? 1 : 0.1);
+      
+    graphState.link.transition()
+      .duration(300)
+      .style("opacity", (d) => {
+        const source = d.source.id || d.source;
+        const target = d.target.id || d.target;
+        return context.has(source) || context.has(target) ? 0.7 : 0.06;
+      });
+      
+    graphState.linkLabel.transition()
+      .duration(300)
+      .style("opacity", (d) => {
+        const source = d.source.id || d.source;
+        const target = d.target.id || d.target;
+        return context.has(source) || context.has(target) ? 0.7 : 0.06;
+      });
+    
+    const panel = document.getElementById("details-panel");
+    if (panel) {
+      panel.innerHTML = `
+        <h4>👥 Similar Users to ${selectedUser}</h4>
+        <ul>
+          ${(data.similar_users || [])
+            .map((item) => `<li><strong>${item.user_name}</strong> (${item.user_id}) - similarity ${item.similarity}</li>`)
+            .join("") || "<li>No similar users found</li>"}
+        </ul>
+      `;
+    }
+    
+    showToast(`Found ${data.similar_users?.length || 0} similar users`, "success");
+  }
+}
 
-  // 2️⃣ Collect connected nodes (ego network)
-  const connected = new Set();
-  connected.add(target.id);
-
-  graphLinks.forEach(l => {
+function highlightNodeByQuery(query) {
+  const target = findNode(query);
+  if (!target) {
+    showToast(`Node "${query}" not found`, "error");
+    return;
+  }
+  
+  const connected = new Set([target.id]);
+  graphState.links.forEach((l) => {
     const s = l.source.id || l.source;
     const t = l.target.id || l.target;
-
     if (s === target.id || t === target.id) {
       connected.add(s);
       connected.add(t);
     }
   });
-
-  // 3️⃣ FADE / HIGHLIGHT NODES (IMPORTANT)
-  d3.selectAll(".graph-node")
-    .transition()
+  
+  graphState.node.transition()
     .duration(300)
-    .attr("opacity", d => connected.has(d.id) ? 1 : 0.1);
-
-  // 4️⃣ FADE / HIGHLIGHT LINKS
-  d3.selectAll("line")
-    .transition()
+    .style("opacity", (d) => connected.has(d.id) ? 1 : 0.12)
+    .attr("stroke", (d) => d.id === target.id ? "#f59e0b" : "#ffffff")
+    .attr("stroke-width", (d) => d.id === target.id ? 3 : 1.5);
+    
+  graphState.label.transition()
     .duration(300)
-    .attr("opacity", d => {
+    .style("opacity", (d) => connected.has(d.id) ? 1 : 0.12);
+    
+  graphState.link.transition()
+    .duration(300)
+    .style("opacity", (d) => {
       const s = d.source.id || d.source;
       const t = d.target.id || d.target;
-      return (connected.has(s) && connected.has(t)) ? 1 : 0.05;
+      return connected.has(s) && connected.has(t) ? 1 : 0.08;
     });
-
-  // 5️⃣ FADE / HIGHLIGHT LINK LABELS (YOU HAVE THESE)
-  d3.selectAll(".link-label")
-    .transition()
+    
+  graphState.linkLabel.transition()
     .duration(300)
-    .attr("opacity", d => {
+    .style("opacity", (d) => {
       const s = d.source.id || d.source;
       const t = d.target.id || d.target;
-      return (connected.has(s) && connected.has(t)) ? 1 : 0.05;
+      return connected.has(s) && connected.has(t) ? 1 : 0.08;
     });
+  
+  showToast(`Found node: ${target.name || target.id}`, "success");
 }
 
-function fadeOtherNodes(focusNode, data, node, link, label) {
-
-  // build neighbor lookup
-  const connected = new Set();
-
-  data.links.forEach(l => {
-    if (l.source.id === focusNode.id) connected.add(l.target.id);
-    if (l.target.id === focusNode.id) connected.add(l.source.id);
-  });
-
-  // fade nodes
-  node.style("opacity", d =>
-    d.id === focusNode.id || connected.has(d.id) ? 1 : 0.15
-  );
-
-  // fade labels
-  label.style("opacity", d =>
-    d.id === focusNode.id || connected.has(d.id) ? 1 : 0.15
-  );
-
-  // fade links
-  link.style("opacity", l =>
-    l.source.id === focusNode.id || l.target.id === focusNode.id ? 1 : 0.1
-  );
-}
-
-window.submitPatient = async function () {
-  const pid = document.getElementById("pid")?.value;
-  const name = document.getElementById("name")?.value;
-  const age = document.getElementById("age")?.value;
-  const gender = document.getElementById("gender")?.value;
-  const notes = document.getElementById("notes")?.value;
-
-  if (!pid || !name) {
-    alert("Patient ID and Name are required");
+function applyRelationshipFilter(relType) {
+  if (!relType) {
+    resetGraphVisibility();
     return;
   }
-
-  try {
-    const res = await fetch("http://127.0.0.1:5000/add_patient", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pid, name, age, gender, notes })
-    });
-
-    const data = await res.json();
-
-const statusEl = document.getElementById("status");
-statusEl.innerText = data.status || "Patient added successfully ✅";
-statusEl.style.color = "green";
-
-  } catch (err) {
-    console.error(err);
-    alert("Error adding patient");
-  }
-};
-
-function showNodeDetails(nodeData) {
-  const panel = document.getElementById("details-panel");
-  if (!panel) return;
-
-  let html = `
-    <h3>${nodeData.label}</h3>
-    <p><strong>${nodeData.name || nodeData.pid || nodeData.id}</strong></p>
-    <ul>
-  `;
-
-  graphLinks.forEach(l => {
-    const s = l.source.id || l.source;
-    const t = l.target.id || l.target;
-
-    if (s === nodeData.id) {
-      html += `<li>${l.type} → ${l.target.name || l.target.id}</li>`;
-    }
-    if (t === nodeData.id) {
-      html += `<li>${l.type} ← ${l.source.name || l.source.id}</li>`;
+  
+  const connected = new Set();
+  graphState.links.forEach((l) => {
+    if (l.type === relType) {
+      connected.add(l.source.id || l.source);
+      connected.add(l.target.id || l.target);
     }
   });
-
-  html += "</ul>";
-  panel.innerHTML = html;
+  
+  graphState.link.transition()
+    .duration(300)
+    .style("opacity", (d) => d.type === relType ? 1 : 0.08);
+    
+  graphState.linkLabel.transition()
+    .duration(300)
+    .style("opacity", (d) => d.type === relType ? 1 : 0.08);
+    
+  graphState.node.transition()
+    .duration(300)
+    .style("opacity", (d) => connected.has(d.id) ? 1 : 0.12);
+    
+  graphState.label.transition()
+    .duration(300)
+    .style("opacity", (d) => connected.has(d.id) ? 1 : 0.12);
+  
+  showToast(`Filtering by relationship: ${relType}`, "success");
 }
 
-window.openGraphAndFocus = function (pid) {
-  // 🔑 ALWAYS convert to graph node ID
-  const graphId = `Patient:${pid}`;
+function renderNodeDetails(nodeData) {
+  const panel = document.getElementById("details-panel");
+  if (!panel) return;
+  
+  const related = [];
+  graphState.links.forEach((l) => {
+    const s = l.source.id || l.source;
+    const t = l.target.id || l.target;
+    
+    if (s === nodeData.id) {
+      const targetName = (l.target.name || l.target.id || t).toString();
+      related.push({ type: l.type, direction: 'out', name: targetName });
+    }
+    if (t === nodeData.id) {
+      const sourceName = (l.source.name || l.source.id || s).toString();
+      related.push({ type: l.type, direction: 'in', name: sourceName });
+    }
+  });
+  
+  const icon = {
+    User: '👤',
+    Movie: '🎬',
+    Genre: '🏷️',
+    Actor: '⭐',
+    Director: '🎥'
+  }[nodeData.label] || '📌';
+  
+  panel.innerHTML = `
+    <div style="animation: fadeIn 0.3s ease-out;">
+      <h4>${icon} ${nodeData.label}</h4>
+      <p><strong>${nodeData.name || nodeData.id}</strong></p>
+      ${nodeData.year ? `<p>📅 Year: ${nodeData.year}</p>` : ''}
+      ${nodeData.age ? `<p>🎂 Age: ${nodeData.age}</p>` : ''}
+      <hr style="margin: 12px 0; border-color: #e2e8f0;">
+      <h5>🔗 Connections (${related.length})</h5>
+      <ul style="max-height: 200px; overflow-y: auto;">
+        ${related.length ? 
+          related.map(item => `<li>${item.direction === 'out' ? '→' : '←'} ${item.type} ${item.direction === 'out' ? 'to' : 'from'} <strong>${item.name}</strong></li>`).join('') 
+          : "<li class='muted'>No connections found</li>"
+        }
+      </ul>
+    </div>
+  `;
+}
 
-  loadView("graph");
-
-  setTimeout(() => {
-    const exists = graphNodes.some(n =>
-      normalize(n.id) === normalize(graphId)
+async function loadGraph() {
+  resetGraphState();
+  
+  const container = document.getElementById("graph-container");
+  if (!container) return;
+  
+  container.innerHTML = '<div style="display: flex; justify-content: center; align-items: center; height: 100%;"><div class="spinner" style="width: 40px; height: 40px;"></div><p style="margin-left: 12px;">Loading graph data...</p></div>';
+  
+  const width = Math.max(container.clientWidth, 760);
+  const height = Math.max(container.clientHeight, 560);
+  
+  let data;
+  try {
+    data = await getGraph();
+  } catch (err) {
+    container.innerHTML = `
+      <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; padding: 40px;">
+        <p class='error' style="font-size: 1.1rem;">⚠️ Unable to load graph: ${err.message}</p>
+        <p class='muted' style="margin-top: 12px;">Make sure Neo4j is running on bolt://localhost:7687, then refresh.</p>
+      </div>
+    `;
+    return;
+  }
+  
+  if (!data.nodes || data.nodes.length === 0) {
+    container.innerHTML = "<div style='display: flex; justify-content: center; align-items: center; height: 100%;'><p class='muted'>No graph data found. Seed the database first.</p></div>";
+    return;
+  }
+  
+  const nodes = data.nodes.map((n) => ({ ...n }));
+  const links = data.links.map((l) => ({ ...l }));
+  
+  container.innerHTML = "";
+  
+  const svg = d3
+    .select(container)
+    .append("svg")
+    .attr("id", "graphSvg")
+    .attr("width", width)
+    .attr("height", height)
+    .style("cursor", "grab");
+  
+  const defs = svg.append("defs");
+  
+  // Add gradient definitions
+  const createGradient = (id, color1, color2) => {
+    const grad = defs.append("radialGradient").attr("id", id).attr("gradientUnits", "objectBoundingBox");
+    grad.append("stop").attr("offset", "0%").attr("stop-color", color1).attr("stop-opacity", 1);
+    grad.append("stop").attr("offset", "100%").attr("stop-color", color2).attr("stop-opacity", 1);
+    return grad;
+  };
+  
+  const gradients = {
+    User: createGradient("gradUser", "#0d9488", "#0f766e"),
+    Movie: createGradient("gradMovie", "#ef4444", "#dc2626"),
+    Genre: createGradient("gradGenre", "#3b82f6", "#2563eb"),
+    Actor: createGradient("gradActor", "#f97316", "#ea580c"),
+    Director: createGradient("gradDirector", "#8b5cf6", "#7c3aed")
+      .append("stop").attr("offset", "100%").attr("stop-color", "#7c3aed").attr("stop-opacity", 1)
+  };
+  
+  const g = svg.append("g");
+  
+  const zoom = d3
+    .zoom()
+    .scaleExtent([0.2, 5])
+    .on("zoom", (event) => {
+      g.attr("transform", event.transform);
+    });
+  svg.call(zoom);
+  
+  const simulation = d3
+    .forceSimulation(nodes)
+    .force("link", d3.forceLink(links).id((d) => d.id).distance(150).strength(0.5))
+    .force("charge", d3.forceManyBody().strength(-500).distanceMin(50).distanceMax(300))
+    .force("center", d3.forceCenter(width / 2, height / 2))
+    .force("collision", d3.forceCollide().radius((d) => (d.label === "Movie" ? 22 : 18)).strength(0.7));
+  
+  const link = g
+    .append("g")
+    .selectAll("line")
+    .data(links)
+    .join("line")
+    .attr("stroke", "#cbd5e1")
+    .attr("stroke-width", 1.5)
+    .attr("opacity", 0.7)
+    .attr("stroke-dasharray", (d) => d.type === "RATED" ? "5,5" : "none");
+  
+  const linkLabel = g
+    .append("g")
+    .selectAll("text")
+    .data(links)
+    .join("text")
+    .text((d) => d.type)
+    .attr("font-size", "9px")
+    .attr("fill", "#64748b")
+    .attr("text-anchor", "middle")
+    .attr("opacity", 0.8)
+    .attr("font-weight", "500");
+  
+  const node = g
+    .append("g")
+    .selectAll("circle")
+    .data(nodes)
+    .join("circle")
+    .attr("r", (d) => (d.label === "Movie" ? 14 : 11))
+    .attr("fill", (d) => `url(#grad${d.label})`)
+    .attr("stroke", "#ffffff")
+    .attr("stroke-width", 2)
+    .attr("cursor", "pointer")
+    .call(
+      d3
+        .drag()
+        .on("start", (event, d) => {
+          if (!event.active) simulation.alphaTarget(0.3).restart();
+          d.fx = d.x;
+          d.fy = d.y;
+          svg.style("cursor", "grabbing");
+        })
+        .on("drag", (event, d) => {
+          d.fx = event.x;
+          d.fy = event.y;
+        })
+        .on("end", (event, d) => {
+          if (!event.active) simulation.alphaTarget(0);
+          d.fx = null;
+          d.fy = null;
+          svg.style("cursor", "grab");
+        })
     );
+  
+  const label = g
+    .append("g")
+    .selectAll("text")
+    .data(nodes)
+    .join("text")
+    .text((d) => (d.name || d.id).length > 20 ? (d.name || d.id).substring(0, 17) + "..." : (d.name || d.id))
+    .attr("font-size", "10px")
+    .attr("font-weight", "500")
+    .attr("text-anchor", "middle")
+    .attr("fill", "#1e293b")
+    .attr("dy", 18);
+  
+  // Add hover effects
+  node.on("mouseenter", function(event, d) {
+    d3.select(this)
+      .transition()
+      .duration(200)
+      .attr("r", (d) => (d.label === "Movie" ? 18 : 15))
+      .attr("stroke", "#f59e0b")
+      .attr("stroke-width", 3);
+      
+    label.filter(n => n.id === d.id)
+      .transition()
+      .duration(200)
+      .attr("font-size", "12px")
+      .attr("font-weight", "700")
+      .attr("fill", "#0f766e");
+  }).on("mouseleave", function(event, d) {
+    d3.select(this)
+      .transition()
+      .duration(200)
+      .attr("r", (d) => (d.label === "Movie" ? 14 : 11))
+      .attr("stroke", "#ffffff")
+      .attr("stroke-width", 2);
+      
+    label.filter(n => n.id === d.id)
+      .transition()
+      .duration(200)
+      .attr("font-size", "10px")
+      .attr("font-weight", "500")
+      .attr("fill", "#1e293b");
+  });
+  
+  node.on("click", (event, d) => {
+    event.stopPropagation();
+    graphState.selectedNode = d;
+    renderNodeDetails(d);
+    
+    // Highlight clicked node
+    node.attr("stroke", (n) => n.id === d.id ? "#f59e0b" : "#ffffff")
+        .attr("stroke-width", (n) => n.id === d.id ? 3 : 2);
+  });
+  
+  svg.on("click", () => {
+    const panel = document.getElementById("details-panel");
+    if (panel) {
+      panel.innerHTML = "✨ Click any node to explore its connections and relationships";
+    }
+    node.attr("stroke", "#ffffff").attr("stroke-width", 2);
+  });
+  
+  simulation.on("tick", () => {
+    node
+      .attr("cx", (d) => Math.max(10, Math.min(width - 10, d.x)))
+      .attr("cy", (d) => Math.max(10, Math.min(height - 10, d.y)));
+    
+    label
+      .attr("x", (d) => Math.max(10, Math.min(width - 10, d.x)))
+      .attr("y", (d) => Math.max(10, Math.min(height - 10, d.y)) + 18);
+    
+    link
+      .attr("x1", (d) => d.source.x)
+      .attr("y1", (d) => d.source.y)
+      .attr("x2", (d) => d.target.x)
+      .attr("y2", (d) => d.target.y);
+    
+    linkLabel
+      .attr("x", (d) => (d.source.x + d.target.x) / 2)
+      .attr("y", (d) => (d.source.y + d.target.y) / 2 - 5);
+  });
+  
+  graphState = {
+    nodes,
+    links,
+    svg,
+    simulation,
+    node,
+    link,
+    label,
+    linkLabel,
+    zoom,
+    selectedNode: null,
+    tooltip: null
+  };
+  
+  showToast(`Loaded ${nodes.length} nodes and ${links.length} connections`, "success");
+}
 
-    if (!exists) {
-      console.warn("❌ Node not in graph:", graphId);
+function formatSimpleMovieRows(items, emptyText) {
+  if (!items || items.length === 0) {
+    return `<p class='muted'>${emptyText}</p>`;
+  }
+  
+  return `
+    <div style="display: grid; gap: 12px;">
+      ${items
+        .map((item) => `
+          <div style="padding: 12px; background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%); border-radius: 12px; border-left: 4px solid #0f766e;">
+            <strong>🎬 ${item.title}</strong> (${item.year || "N/A"})<br>
+            <small class="muted">Score: ${item.score}</small>
+          </div>
+        `)
+        .join("")}
+    </div>
+  `;
+}
+
+function formatWeightedRows(items) {
+  if (!items || items.length === 0) {
+    return "<p class='muted'>No weighted recommendations available.</p>";
+  }
+  
+  return `
+    <div style="display: grid; gap: 12px;">
+      ${items
+        .map(
+          (item) => `
+            <div style="padding: 12px; background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border-radius: 12px; border-left: 4px solid #10b981;">
+              <strong>🎯 ${item.title}</strong> (${item.year || "N/A"})<br>
+              <small>Score: ${item.score} | 👥 Similar users: ${item.signals.similar_users} | 🏷️ Shared genres: ${item.signals.shared_genres}</small>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function formatSimilarRows(items) {
+  if (!items || items.length === 0) {
+    return "<p class='muted'>No similar users found.</p>";
+  }
+  
+  return `
+    <div style="display: grid; gap: 12px;">
+      ${items
+        .map(
+          (u) => `
+            <div style="padding: 12px; background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%); border-radius: 12px; border-left: 4px solid #3b82f6;">
+              <strong>👤 ${u.user_name}</strong> (${u.user_id})<br>
+              <small>Overlap: ${u.similarity} shared movies</small>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+// Event Listeners
+document.addEventListener("click", async (event) => {
+  const navBtn = event.target.closest("[data-view]");
+  if (navBtn) {
+    render(navBtn.dataset.view);
+    return;
+  }
+  
+  const categoryBtn = event.target.closest("[data-node-category]");
+  if (categoryBtn && graphState.node) {
+    const relFilter = document.getElementById("relFilter");
+    if (relFilter) relFilter.value = "";
+    
+    const graphFocusFilter = document.getElementById("graphFocusFilter");
+    if (graphFocusFilter) graphFocusFilter.value = "";
+    
+    showNodesByCategory(categoryBtn.dataset.nodeCategory);
+    return;
+  }
+  
+  if (event.target.id === "submitUser") {
+    const user_id = document.getElementById("userId")?.value;
+    const name = document.getElementById("userName")?.value;
+    const age = Number(document.getElementById("userAge")?.value || 0);
+    const preferences = parseCsvList(document.getElementById("userPreferences")?.value);
+    
+    if (!user_id || !name) {
+      setStatus("userStatus", "Please fill in User ID and Name", false);
       return;
     }
+    
+    showLoading('submitUser', true);
+    try {
+      const result = await addUser({ user_id, name, age, preferences });
+      setStatus("userStatus", result.status || "User added successfully!");
+      document.getElementById("userId").value = "";
+      document.getElementById("userName").value = "";
+      document.getElementById("userAge").value = "";
+      document.getElementById("userPreferences").value = "";
+    } catch (err) {
+      setStatus("userStatus", err.message, false);
+    }
+    showLoading('submitUser', false);
+    return;
+  }
+  
+  if (event.target.id === "submitMovie") {
+    const movie_id = document.getElementById("movieId")?.value;
+    const title = document.getElementById("movieTitle")?.value;
+    const year = Number(document.getElementById("movieYear")?.value || 0);
+    const genres = parseCsvList(document.getElementById("movieGenres")?.value);
+    const actors = parseCsvList(document.getElementById("movieActors")?.value);
+    const directors = parseCsvList(document.getElementById("movieDirectors")?.value);
+    
+    if (!movie_id || !title) {
+      setStatus("movieStatus", "Please fill in Movie ID and Title", false);
+      return;
+    }
+    
+    showLoading('submitMovie', true);
+    try {
+      const result = await addMovie({ movie_id, title, year, genres, actors, directors });
+      setStatus("movieStatus", result.status || "Movie saved successfully!");
+      document.getElementById("movieId").value = "";
+      document.getElementById("movieTitle").value = "";
+      document.getElementById("movieYear").value = "";
+      document.getElementById("movieGenres").value = "";
+      document.getElementById("movieActors").value = "";
+      document.getElementById("movieDirectors").value = "";
+    } catch (err) {
+      setStatus("movieStatus", err.message, false);
+    }
+    showLoading('submitMovie', false);
+    return;
+  }
+  
+  if (event.target.id === "linkUserMovieBtn") {
+    const user_id = document.getElementById("linkUserId")?.value;
+    const movie_id = document.getElementById("linkMovieId")?.value;
+    const action = document.getElementById("linkAction")?.value;
+    const ratingRaw = document.getElementById("linkRating")?.value;
+    const rating = ratingRaw ? Number(ratingRaw) : null;
+    
+    if (!user_id || !movie_id) {
+      setStatus("linkStatus", "Please fill in User ID and Movie ID", false);
+      return;
+    }
+    
+    if (action === "RATED" && (rating === null || rating < 0 || rating > 5)) {
+      setStatus("linkStatus", "Please provide a valid rating (0-5)", false);
+      return;
+    }
+    
+    showLoading('linkUserMovieBtn', true);
+    try {
+      const result = await linkUserMovie({ user_id, movie_id, action, rating });
+      setStatus("linkStatus", result.status || "Activity linked successfully!");
+      document.getElementById("linkUserId").value = "";
+      document.getElementById("linkMovieId").value = "";
+      document.getElementById("linkRating").value = "";
+    } catch (err) {
+      setStatus("linkStatus", err.message, false);
+    }
+    showLoading('linkUserMovieBtn', false);
+    return;
+  }
+  
+  if (event.target.id === "fetchInsights") {
+    const userId = document.getElementById("insightUserId")?.value;
+    const target = document.getElementById("insightResult");
+    if (!userId) {
+      target.innerHTML = "<p class='error'>Please enter a User ID</p>";
+      return;
+    }
+    
+    target.innerHTML = '<div style="display: flex; align-items: center; gap: 12px;"><div class="spinner"></div> Loading insights...</div>';
+    
+    try {
+      const data = await getUserInsights(userId);
+      target.innerHTML = `
+        <div style="animation: fadeIn 0.3s ease-out;">
+          <h4 style="color: #0f766e;">👤 ${data.user_name} (${data.user_id})</h4>
+          <p><strong>🎂 Age:</strong> ${data.age || "N/A"}</p>
+          <p><strong>👁️ Watched Movies:</strong> ${(data.watched_movies || []).join(", ") || "None"}</p>
+          <p><strong>❤️ Liked Movies:</strong> ${(data.liked_movies || []).join(", ") || "None"}</p>
+          <p><strong>🏷️ Top Genres:</strong> ${(data.genre_preferences || []).map((g) => `${g.genre} (${g.preference})`).join(", ") || "None"}</p>
+          <p><strong>⭐ Favorite Actors:</strong> ${(data.favorite_actors || []).join(", ") || "None"}</p>
+          <p><strong>🎥 Favorite Directors:</strong> ${(data.favorite_directors || []).join(", ") || "None"}</p>
+        </div>
+      `;
+    } catch (err) {
+      target.innerHTML = `<p class='error'>❌ ${err.message}</p>`;
+    }
+    return;
+  }
+  
+  if (event.target.id === "fetchRecommendations") {
+    const userId = document.getElementById("recUserId")?.value;
+    const target = document.getElementById("recommendResult");
+    if (!userId) {
+      target.innerHTML = "<p class='error'>Please enter a User ID</p>";
+      return;
+    }
+    
+    target.innerHTML = '<div style="display: flex; align-items: center; gap: 12px;"><div class="spinner"></div> Generating recommendations...</div>';
+    
+    try {
+      const data = await getRecommendations(userId);
+      target.innerHTML = `
+        <div style="animation: fadeIn 0.3s ease-out;">
+          <h4>🤝 Collaborative Recommendations</h4>
+          ${formatSimpleMovieRows(data.collaborative, "No collaborative recommendations found.")}
+          <h4 style="margin-top: 20px;">📚 Content-Based Recommendations</h4>
+          ${formatSimpleMovieRows(data.content_based, "No content-based recommendations found.")}
+          <h4 style="margin-top: 20px;">⚡ Weighted Recommendation Score</h4>
+          ${formatWeightedRows(data.weighted)}
+        </div>
+      `;
+    } catch (err) {
+      target.innerHTML = `<p class='error'>❌ ${err.message}</p>`;
+    }
+    return;
+  }
+  
+  if (event.target.id === "fetchSimilar") {
+    const userId = document.getElementById("recUserId")?.value;
+    const target = document.getElementById("similarResult");
+    if (!userId) {
+      target.innerHTML = "<p class='error'>Please enter a User ID</p>";
+      return;
+    }
+    
+    target.innerHTML = '<div style="display: flex; align-items: center; gap: 12px;"><div class="spinner"></div> Finding similar users...</div>';
+    
+    try {
+      const data = await getSimilarUsers(userId);
+      target.innerHTML = `
+        <div style="animation: fadeIn 0.3s ease-out;">
+          <h4>👥 Similar Users</h4>
+          ${formatSimilarRows(data.similar_users)}
+        </div>
+      `;
+    } catch (err) {
+      target.innerHTML = `<p class='error'>❌ ${err.message}</p>`;
+    }
+    return;
+  }
+  
+  if (event.target.id === "uploadCSV") {
+    const file = document.getElementById("csvFile")?.files?.[0];
+    if (!file) {
+      setStatus("csvStatus", "Please select a CSV file", false);
+      return;
+    }
+    
+    showLoading('uploadCSV', true);
+    try {
+      const result = await importCsv(file);
+      setStatus("csvStatus", `✅ Imported ${result.rows || 0} rows successfully`);
+      document.getElementById("csvFile").value = "";
+    } catch (err) {
+      setStatus("csvStatus", err.message, false);
+    }
+    showLoading('uploadCSV', false);
+    return;
+  }
+  
+  if (event.target.id === "refreshGraph" && graphState.svg) {
+    loadGraph();
+    return;
+  }
+  
+  if (event.target.id === "findNode") {
+    const value = document.getElementById("nodeSearch")?.value;
+    if (!value) {
+      showToast("Please enter a node name or ID to search", "error");
+      return;
+    }
+    highlightNodeByQuery(value);
+    return;
+  }
+  
+  if (event.target.id === "resetFilterBtn") {
+    const relFilter = document.getElementById("relFilter");
+    if (relFilter) relFilter.value = "";
+    const graphFocusFilter = document.getElementById("graphFocusFilter");
+    if (graphFocusFilter) graphFocusFilter.value = "";
+    const search = document.getElementById("nodeSearch");
+    if (search) search.value = "";
+    resetGraphVisibility();
+    showToast("All filters cleared", "success");
+    return;
+  }
+  
+  if (event.target.id === "clearSearchBtn") {
+    const search = document.getElementById("nodeSearch");
+    if (search) search.value = "";
+    resetGraphVisibility();
+    showToast("Search cleared", "success");
+    return;
+  }
+  
+  if (event.target.id === "resetViewBtn") {
+    resetGraphView();
+    showToast("View reset to default", "success");
+    return;
+  }
+  
+  if (event.target.id === "cleanLayoutBtn") {
+    cleanGraphLayout();
+    return;
+  }
+  
+  if (event.target.id === "clusterGraphBtn") {
+    clusterGraphNodes();
+    return;
+  }
+});
 
-    searchNodeAndShowEgo(graphId);
-  }, 800);
-};
+document.addEventListener("change", async (event) => {
+  if (event.target.id === "relFilter" && graphState.node) {
+    applyRelationshipFilter(event.target.value);
+    return;
+  }
+  
+  if (event.target.id === "graphFocusFilter" && graphState.node) {
+    await applyGraphFocusFilter(event.target.value);
+  }
+});
 
-
-
-
-
+window.addEventListener("DOMContentLoaded", () => {
+  render("dashboard");
+});

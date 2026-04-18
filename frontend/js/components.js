@@ -1,255 +1,204 @@
-export function welcomeView() {
-  return `
-    <div class="card">
-      <h2>Welcome</h2>
-      <p>Select an option from the navigation above.</p>
-    </div>
-  `;
-}
-
-export function addPatientView() {
-  return `
-    <div class="card">
-      <h2>Add Patient</h2>
-
-      <input id="pid" placeholder="Patient ID" />
-      <input id="name" placeholder="Name" />
-      <input id="age" placeholder="Age" />
-      <input id="gender" placeholder="Gender" />
-      <input id="notes" placeholder="Notes" />
-
-      <button class="primary-btn" type="button" onclick="window.submitPatient()">
-  ➕ Add Patient
-</button>
-
-      <p id="status"></p>
-
-      <button class="back-btn" onclick="window.loadView('dashboard')">
-  ← Back to Dashboard
-</button>
-
-    </div>
-  `;
-}
-
-
-
-
-export function linkDiseaseView() {
-  return `
-    <div class="card">
-      <h2>Link Disease</h2>
-
-      <input id="pid" placeholder="Patient ID" />
-      <input id="disease" placeholder="Disease Name" />
-
-      <button class="primary-btn" id="linkDisease">
-  🔗 Link Disease
-</button>
-
-      <p id="status"></p>
-
-      <button class="back-btn" onclick="window.loadView('dashboard')">
-  ← Back to Dashboard
-</button>
-</div>
-
-  `;
-}
-
-
-export function searchView() {
-  return `
-    <div class="card">
-      <h2>Patient Insights</h2>
-      <input id="pid" placeholder="Patient ID">
-      <button class="primary" id="searchPatient">Search</button>
-      <pre id="result"></pre>
-       <!-- ✅ BACK BUTTON -->
-      <button class="back-btn" onclick="window.loadView('dashboard')">
-  ← Back to Dashboard
-</button>
-
-
-    </div>
-  `;
-}
-
-export function riskView() {
-  return `
-    <div class="card">
-      <h2>🔥 Patient Risk Scores</h2>
-      <p>Calculate health risk score based on diseases & treatments.</p>
-
-      <input id="riskPid" class="risk-input" placeholder="Enter Patient ID" />
-
-      <button id="calculateRisk" class="risk-btn">
-  🔥 Calculate Risk
-</button>
-
-      <div id="riskResult" style="margin-top: 12px;"></div>
-
-      <br />
-      <button class="back-btn" onclick="window.loadView('dashboard')">
-  ← Back to Dashboard
-</button>
-
-
-    </div>
-  `;
-}
-
-
 export function dashboardView() {
   return `
-    <div class="card dashboard">
-      <h2>⭐ MedGraph Dashboard ⭐</h2>
-      <p class="muted">
-        A smart knowledge graph for patients, diseases & treatments.
-      </p>
+    <section class="card dashboard">
+      <h2>🎬 CineGraphAI</h2>
+      <p class="muted">Experience the power of graph-based movie intelligence. Discover connections, get personalized recommendations, and explore the movie universe like never before.</p>
 
       <div class="dashboard-grid">
-        <button onclick="window.loadView('graph')">🧠 View Medical Graph</button>
-<button onclick="window.loadView('add')">➕ Add New Patient</button>
-
-
-<button onclick="window.loadView('risk')">🔥 Update Risk Scores</button>
-<button onclick="window.loadView('import')">📁 Import Data (CSV)</button>
-
-
+        <button data-view="graph">
+          <strong>📊 Explore Movie Graph</strong><br>
+          <small>Visualize connections between users, movies, actors, and directors</small>
+        </button>
+        <button data-view="addUser">
+          <strong>👤 Add User Profile</strong><br>
+          <small>Create new user profiles with preferences</small>
+        </button>
+        <button data-view="addMovie">
+          <strong>🎬 Add Movie Catalog</strong><br>
+          <small>Expand your movie database</small>
+        </button>
+        <button data-view="link">
+          <strong>🔗 Link User Activity</strong><br>
+          <small>Record watched, liked, or rated movies</small>
+        </button>
+        <button data-view="insights">
+          <strong>📈 User Insights</strong><br>
+          <small>Discover viewing patterns and preferences</small>
+        </button>
+        <button data-view="recommend">
+          <strong>🎯 Recommendation Engine</strong><br>
+          <small>Get AI-powered movie suggestions</small>
+        </button>
+        <button data-view="import">
+          <strong>📤 Import Ratings CSV</strong><br>
+          <small>Bulk upload user ratings</small>
+        </button>
       </div>
-    </div>
+    </section>
+  `;
+}
+
+export function addUserView() {
+  return `
+    <section class="card">
+      <h2>➕ Add New User</h2>
+      <p class="muted">Create a user profile to start receiving personalized recommendations</p>
+      
+      <input id="userId" placeholder="User ID (e.g., U101)" />
+      <input id="userName" placeholder="Full Name" />
+      <input id="userAge" type="number" placeholder="Age" />
+      <input id="userPreferences" placeholder="Favorite Genres (comma separated, e.g., Action, Drama)" />
+      
+      <button id="submitUser" class="primary-btn">✨ Create User Profile</button>
+      <p id="userStatus" class="status"></p>
+      <button class="back-btn" data-view="dashboard">← Back to Dashboard</button>
+    </section>
+  `;
+}
+
+export function addMovieView() {
+  return `
+    <section class="card">
+      <h2>🎬 Add New Movie</h2>
+      <p class="muted">Expand your movie collection with detailed metadata</p>
+      
+      <input id="movieId" placeholder="Movie ID (e.g., M101)" />
+      <input id="movieTitle" placeholder="Movie Title" />
+      <input id="movieYear" type="number" placeholder="Release Year" />
+      <input id="movieGenres" placeholder="Genres (comma separated)" />
+      <input id="movieActors" placeholder="Actors (comma separated)" />
+      <input id="movieDirectors" placeholder="Directors (comma separated)" />
+      
+      <button id="submitMovie" class="primary-btn">🎥 Add Movie</button>
+      <p id="movieStatus" class="status"></p>
+      <button class="back-btn" data-view="dashboard">← Back to Dashboard</button>
+    </section>
+  `;
+}
+
+export function linkView() {
+  return `
+    <section class="card">
+      <h2>🔗 Link User Activity</h2>
+      <p class="muted">Record how users interact with movies</p>
+      
+      <input id="linkUserId" placeholder="User ID" />
+      <input id="linkMovieId" placeholder="Movie ID" />
+
+      <div class="split-actions">
+        <select id="linkAction">
+          <option value="WATCHED">👁️ WATCHED</option>
+          <option value="LIKED">❤️ LIKED</option>
+          <option value="RATED">⭐ RATED</option>
+        </select>
+        <input id="linkRating" type="number" min="0" max="5" step="0.5" placeholder="Rating (0-5, for RATED only)" />
+      </div>
+
+      <button id="linkUserMovieBtn" class="primary-btn">🔗 Create Connection</button>
+      <p id="linkStatus" class="status"></p>
+      <button class="back-btn" data-view="dashboard">← Back to Dashboard</button>
+    </section>
+  `;
+}
+
+export function insightsView() {
+  return `
+    <section class="card">
+      <h2>📊 User Insights Dashboard</h2>
+      <p class="muted">Deep dive into user preferences and viewing patterns</p>
+      
+      <input id="insightUserId" placeholder="Enter User ID" />
+      <button id="fetchInsights" class="primary-btn">🔍 Analyze User</button>
+      <div id="insightResult" class="result-block"></div>
+      <button class="back-btn" data-view="dashboard">← Back to Dashboard</button>
+    </section>
+  `;
+}
+
+export function recommendationView() {
+  return `
+    <section class="card">
+      <h2>🎯 AI Recommendation Engine</h2>
+      <p class="muted">Get personalized movie recommendations powered by graph algorithms</p>
+      
+      <input id="recUserId" placeholder="Enter User ID" />
+      <div style="display: flex; gap: 12px; margin-top: 16px;">
+        <button id="fetchRecommendations" class="primary-btn">🎬 Get Recommendations</button>
+        <button id="fetchSimilar" class="ghost-btn">👥 Find Similar Users</button>
+      </div>
+      <div id="recommendResult" class="result-block"></div>
+      <div id="similarResult" class="result-block"></div>
+      <button class="back-btn" data-view="dashboard">← Back to Dashboard</button>
+    </section>
   `;
 }
 
 export function importCSVView() {
   return `
-    <div class="card">
-      <h2>Import CSV</h2>
-      <p>Select a patient CSV file to upload into MedGraph.</p>
-
-      <label class="file-upload">
-  <input type="file" id="csvFile" />
-  <span class="file-upload-text">📄 Choose CSV file</span>
-</label>
-
-      <br /><br />
-
-      <button id="uploadCSV" class="primary-btn">
-  ⬆️ Upload CSV
-</button>
-
-      <p id="csvStatus"></p>
-
-      <br />
-       <!-- ✅ BACK BUTTON -->
-      <button class="back-btn" onclick="window.loadView('dashboard')">
-  ← Back to Dashboard
-</button>
-
-
-    </div>
+    <section class="card">
+      <h2>📤 Bulk Import Ratings</h2>
+      <p class="muted">Upload a CSV file with user ratings for batch processing</p>
+      <p class="muted" style="font-size: 0.85rem;">Expected columns: user_id, user_name, movie_id, movie_title, year, genres, watched, liked, rating</p>
+      
+      <input id="csvFile" type="file" accept=".csv" style="padding: 8px;" />
+      <button id="uploadCSV" class="primary-btn">📁 Upload & Process</button>
+      <p id="csvStatus" class="status"></p>
+      <button class="back-btn" data-view="dashboard">← Back to Dashboard</button>
+    </section>
   `;
 }
 
 export function graphView() {
   return `
-  <div class="graph-page full-width">
+    <section class="graph-page">
+      <div class="graph-toolbar">
+        <div class="graph-actions-row">
+          <button id="resetFilterBtn" class="graph-action-btn">🔄 Reset All Filters</button>
+          <button id="cleanLayoutBtn" class="graph-action-btn">🧹 Clean Layout</button>
+          <button id="clusterGraphBtn" class="graph-action-btn">🎯 Cluster Nodes</button>
+          <button id="resetViewBtn" class="graph-action-btn">🔍 Reset View</button>
+          <button id="refreshGraph" class="graph-action-btn">🔄 Refresh Graph</button>
+        </div>
 
-    <!-- =====================
-         Toolbar
-    ====================== -->
-    <div class="graph-toolbar">
+        <div class="legend-row">
+          <button type="button" class="legend user" data-node-category="User">👤 Users</button>
+          <button type="button" class="legend movie" data-node-category="Movie">🎬 Movies</button>
+          <button type="button" class="legend genre" data-node-category="Genre">🏷️ Genres</button>
+          <button type="button" class="legend actor" data-node-category="Actor">⭐ Actors</button>
+          <button type="button" class="legend director" data-node-category="Director">🎥 Directors</button>
+        </div>
 
-      <!-- Node type pills -->
-      <div class="node-types">
-        <button class="pill drug">Drug</button>
-        <button class="pill disease">Disease</button>
-        <button class="pill gene">Gene</button>
-        <button class="pill symptom">Symptom</button>
-        <button class="pill patient">Patient</button>
-      </div>
-
-      <!-- Action buttons -->
-      <div class="actions">
-        <button id="resetFilterBtn">Reset Filter</button>
-        <button id="riskBtn">Calculate Risk Score</button>
-        <button id="similarBtn">Find Similar Patients</button>
-        <button id="cleanLayoutBtn">Clean Layout</button>
-        <button id="clusterPatientsBtn">Cluster Patients</button>
-        <button id="resetViewBtn">Reset View</button>
-      </div>
-
-      <!-- Search row -->
-      <div class="search-row">
-        <select id="relFilter">
-          <option value="">All Relationships</option>
-          <option value="HAS_DISEASE">HAS_DISEASE</option>
-          <option value="TREATS">TREATS</option>
-          <option value="HAS_SYMPTOM">HAS_SYMPTOM</option>
-          <option value="INTERACTS_WITH">INTERACTS_WITH</option>
-        </select>
-
-        <input id="nodeSearch" placeholder="Search node..." />
-
-        <button id="findNode" class="btn btn-secondary">
-          🔍 Find
-        </button>
-
-        <button id="refreshGraph" class="btn btn-primary">
-          🔄 Load / Refresh Graph
-        </button>
-      </div>
-    </div>
-
-    <!-- =====================
-         Similar Patients Panel
-    ====================== -->
-    <div class="similar-patients-panel">
-      <h4>👥 Similar Patients</h4>
-      <div id="similarStatus" class="similar-status muted">
-        Click “Find Similar Patients” to analyze similarity
-      </div>
-      <ul id="similarList" class="similar-list"></ul>
-    </div>
-
-    <!-- =====================
-         Main Content Area
-    ====================== -->
-    <div class="graph-content">
-
-      <!-- 🔴 GRAPH RENDER TARGET (D3 OWNS SVG) -->
-      <div
-        id="graph-container"
-        style="height: 75vh; min-height: 600px; width: 100%;"
-      ></div>
-
-      <!-- Node details -->
-      <div class="node-info">
-        <h3>Node Info</h3>
-        <div id="details-panel">
-          Click a node to see details
+        <div class="search-row">
+          <select id="relFilter">
+            <option value="">📌 All Relationships</option>
+            <option value="WATCHED">👁️ WATCHED</option>
+            <option value="LIKED">❤️ LIKED</option>
+            <option value="RATED">⭐ RATED</option>
+            <option value="BELONGS_TO">🏷️ BELONGS_TO</option>
+            <option value="ACTED_IN">🎭 ACTED_IN</option>
+            <option value="DIRECTED">🎬 DIRECTED</option>
+          </select>
+          <select id="graphFocusFilter">
+            <option value="">🌐 All Graph Data</option>
+            <option value="actors">🎭 Show Only Actors</option>
+            <option value="recommendations">🎯 Show Recommendations</option>
+            <option value="similar_users">👥 Highlight Similar Users</option>
+          </select>
+          <input id="nodeSearch" placeholder="🔍 Search by ID or name..." />
+          <button id="findNode" class="ghost-btn">🔎 Find</button>
+          <button id="clearSearchBtn" class="ghost-btn">🗑️ Clear</button>
         </div>
       </div>
 
-    </div>
+      <div class="graph-content">
+        <div id="graph-container"></div>
+        <aside class="node-panel">
+          <h3>🔍 Node Inspector</h3>
+          <div id="details-panel" class="muted">✨ Click any node to explore its connections and relationships</div>
+        </aside>
+      </div>
 
-    <!-- Back button -->
-    <button
-      class="back-btn graph-back"
-      onclick="window.loadView('dashboard')"
-    >
-      ← Back to Dashboard
-    </button>
-
-  </div>
+      <button class="back-btn" data-view="dashboard">← Back to Dashboard</button>
+    </section>
   `;
 }
-
-
-
-
-
-
-
-
