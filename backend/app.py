@@ -1,187 +1,343 @@
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from neo4j import GraphDatabase
+import os
 import csv
-import io
-
-def run_query(query, params=None):
-    with driver.session() as session:
-        result = session.run(query, params or {})
-        return [r.data() for r in result]
 
 app = Flask(__name__)
 CORS(app)
 
+NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "cinedb")
+
 driver = GraphDatabase.driver(
-    "bolt://localhost:7687",
-    auth=("neo4j", "neo4j123")   # ← change password if needed
+    "neo4j://127.0.0.1:7687",
+    auth=("neo4j", "neo4j123"),
 )
 
+def normalize_text(value):
+    return str(value or "").strip()
 
+def normalize_user_id(value):
+    return normalize_text(value).upper()
+
+def parse_list_field(raw_value):
+    if isinstance(raw_value, list):
+        values = raw_value
+    elif isinstance(raw_value, str):
+        values = raw_value.replace("|", ",").split(",")
+    else:
+        values = []
+
+    cleaned = []
+    seen = set()
+    for item in values:
+        text = normalize_text(item)
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            cleaned.append(text)
+    return cleaned
+
+def resolve_existing_name(session, label, field, value):
+    raw_value = normalize_text(value)
+    if not raw_value:
+        return ""
+
+    query = f"""
+    MATCH (n:{label})
+    WHERE toLower(trim(n.{field})) = toLower(trim($value))
+    RETURN n.{field} AS canonical
+    LIMIT 1
+    """
+    record = session.run(query, value=raw_value).single()
+    if record and record.get("canonical"):
+        return record["canonical"].strip()
+    return raw_value
 
 # --------------------
-# Health Check
+# Home & Test
 # --------------------
 @app.route("/")
 def home():
-    return jsonify({"status": "NeoGraphMed Backend is running"})
-
+    return jsonify({"status": "CineGraphAI backend is running"})
 
 @app.route("/test")
 def test_neo4j():
-    query = "MATCH (n) RETURN count(n) AS total_nodes"
-    result = run_query(query)
-    return jsonify(result)
-
-
-# --------------------
-# Add Patient (WITH NAME ✅)
-# --------------------
-@app.route("/add_patient", methods=["POST"])
-def add_patient():
     try:
-        data = request.json
-        print("RECEIVED DATA:", data)
-        
-        query = """
-        MERGE (p:Patient {id: toUpper(trim($pid))})
-        SET p.name = $name,
-            p.age = $age,
-            p.gender = $gender,
-            p.notes = $notes
-        """
-            
-        with driver.session() as session:
+        with driver.session(database=NEO4J_DATABASE) as session:
+            record = session.run("MATCH (n) RETURN count(n) AS total_nodes").single()
+        return jsonify({"total_nodes": record["total_nodes"] if record else 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# --------------------
+# Add User
+# --------------------
+@app.route("/add_user", methods=["POST"])
+def add_user():
+    try:
+        data = request.json or {}
+        user_id = normalize_user_id(data.get("user_id"))
+        name = normalize_text(data.get("name"))
+        age = data.get("age")
+        preferences = parse_list_field(data.get("preferences", []))
+
+        if not user_id or not name:
+            return jsonify({"error": "user_id and name are required"}), 400
+
+        with driver.session(database=NEO4J_DATABASE) as session:
+            existing = session.run(
+                "MATCH (u:User {id: $uid}) RETURN count(u) AS total",
+                uid=user_id,
+            ).single()
+            if existing and existing["total"] > 0:
+                return jsonify({"error": "user_id already exists"}), 409
+
             session.run(
-                query,
-                pid=data["pid"].strip(),
-                name=data["name"],
-                age=data["age"],
-                gender=data["gender"],
-                notes=data["notes"]
+                """
+                CREATE (u:User {id: $uid, name: $name, age: $age})
+                """,
+                uid=user_id,
+                name=name,
+                age=age,
             )
 
-        return jsonify({"status": "Patient added successfully"}), 200
-
-    except Exception as e:
-        print("❌ ERROR in /add_patient:", e)
-        return jsonify({"error": "Failed to add patient"}), 500
-
-
-
-@app.route("/import_csv", methods=["POST"])
-def import_csv():
-    try:
-        file = request.files["file"]
-
-        rows = csv.DictReader(
-            file.stream.read().decode("utf-8").splitlines()
-        )
-
-        with driver.session() as session:
-            for row in rows:
-                pid = row.get("pid", "").strip().upper()
-                name = row.get("name")
-                age = row.get("age")
-                gender = row.get("gender")
-                disease = row.get("disease")
-
-                # 1️⃣ Create / update Patient
+            for genre in preferences:
+                canonical_genre = resolve_existing_name(session, "Genre", "name", genre)
                 session.run(
                     """
-                    MERGE (p:Patient {id:$pid})
-                    SET p.name=$name,
-                        p.age=$age,
-                        p.gender=$gender
+                    MATCH (u:User {id: $uid})
+                    MERGE (g:Genre {name: $genre})
+                    MERGE (u)-[:PREFERS]->(g)
                     """,
-                    pid=pid,
-                    name=name,
-                    age=age,
-                    gender=gender
+                    uid=user_id,
+                    genre=canonical_genre,
                 )
 
-                # 2️⃣ Create Disease + Relationship
-                if disease:
-                    session.run(
-                        """
-                        MATCH (p:Patient {id: toUpper(trim($pid))})
-                        MERGE (d:Disease {name:$disease})
-                        MERGE (p)-[:HAS_DISEASE]->(d)
-                        """,
-                        pid=pid,
-                        disease=disease
-                    )
-
-                print(f"✅ Imported {pid} → {disease}")
-
-        return jsonify({"status": "CSV imported with relationships"}), 200
-
+        return jsonify({"status": "User added successfully", "preferences": preferences})
     except Exception as e:
-        print("❌ ERROR in /import_csv:", e)
-        return jsonify({"error": "Failed to import CSV"}), 500
-
-
-
+        return jsonify({"error": str(e)}), 500
 
 # --------------------
-# Link Patient → Disease
+# Add Movie
 # --------------------
-@app.route("/link_patient_disease", methods=["POST"])
-def link_patient_disease():
-    data = request.json
+@app.route("/add_movie", methods=["POST"])
+def add_movie():
+    try:
+        data = request.json or {}
+        movie_id = normalize_user_id(data.get("movie_id"))
+        title = normalize_text(data.get("title"))
+        year = data.get("year")
+        genres = parse_list_field(data.get("genres", []))
 
-    query = """
-    MATCH (p:Patient {id:$pid})
-    MERGE (d:Disease {name:$disease})
-    MERGE (p)-[:HAS_DISEASE]->(d)
+        if not movie_id or not title:
+            return jsonify({"error": "movie_id and title are required"}), 400
+
+        with driver.session(database=NEO4J_DATABASE) as session:
+            existing = session.run(
+                "MATCH (m:Movie {id: $mid}) RETURN count(m) AS total",
+                mid=movie_id,
+            ).single()
+            if existing and existing["total"] > 0:
+                return jsonify({"error": "movie_id already exists"}), 409
+
+            session.run(
+                """
+                CREATE (m:Movie {id: $mid, title: $title, year: $year})
+                """,
+                mid=movie_id,
+                title=title,
+                year=year,
+            )
+
+            for genre in genres:
+                canonical_genre = resolve_existing_name(session, "Genre", "name", genre)
+                session.run(
+                    """
+                    MATCH (m:Movie {id: $mid})
+                    MERGE (g:Genre {name: $genre})
+                    MERGE (m)-[:BELONGS_TO]->(g)
+                    """,
+                    mid=movie_id,
+                    genre=canonical_genre,
+                )
+
+        return jsonify({"status": "Movie added successfully", "genres": genres})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# --------------------
+# Link User to Movie
+# --------------------
+@app.route("/link_user_movie", methods=["POST"])
+def link_user_movie():
+    try:
+        data = request.json or {}
+        user_id = normalize_user_id(data.get("user_id"))
+        movie_id = normalize_user_id(data.get("movie_id"))
+        action = normalize_text(data.get("action", "WATCHED"))
+
+        if not user_id or not movie_id:
+            return jsonify({"error": "user_id and movie_id are required"}), 400
+
+        valid_actions = ["WATCHED", "LIKED", "RATED"]
+        if action not in valid_actions:
+            action = "WATCHED"
+
+        with driver.session(database=NEO4J_DATABASE) as session:
+            session.run(
+                f"""
+                MATCH (u:User {{id: $uid}})
+                MATCH (m:Movie {{id: $mid}})
+                MERGE (u)-[:{action}]->(m)
+                """,
+                uid=user_id,
+                mid=movie_id,
+            )
+
+        return jsonify({"status": f"User linked to movie with {action} relationship"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# --------------------
+# User Insights
+# --------------------
+@app.route("/user_insights/<user_id>", methods=["GET"])
+def user_insights(user_id):
+    try:
+        uid = normalize_user_id(user_id)
+
+        with driver.session(database=NEO4J_DATABASE) as session:
+            record = session.run(
+                """
+                MATCH (u:User {id: $uid})
+                OPTIONAL MATCH (u)-[watched:WATCHED]->(m:Movie)
+                OPTIONAL MATCH (u)-[liked:LIKED]->(m2:Movie)
+                OPTIONAL MATCH (u)-[:PREFERS]->(g:Genre)
+                RETURN
+                    u.name AS user_name,
+                    u.id AS user_id,
+                    collect(DISTINCT m.title) AS watched_movies,
+                    collect(DISTINCT m2.title) AS liked_movies,
+                    collect(DISTINCT g.name) AS preferred_genres,
+                    count(DISTINCT m) AS total_watched,
+                    count(DISTINCT m2) AS total_liked
+                """,
+                uid=uid,
+            ).single()
+
+        if not record:
+            return jsonify({"error": "User not found"}), 404
+
+        return jsonify({
+            "user_id": record["user_id"],
+            "user_name": record["user_name"],
+            "watched_movies": record["watched_movies"],
+            "liked_movies": record["liked_movies"],
+            "preferred_genres": record["preferred_genres"],
+            "total_watched": record["total_watched"],
+            "total_liked": record["total_liked"]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# --------------------
+# Recommendations
+# --------------------
+def build_rating_weighted_recommendations(uid, limit=5):
+    """Build recommendations using collaborative + content-based filtering"""
+    return f"""
+    MATCH (target_user:User {{id: '{uid}'}})
+    
+    // Find similar users (users who liked similar genres)
+    MATCH (target_user)-[:PREFERS]->(genre:Genre)<-[:PREFERS]-(sim_user:User)
+    WHERE sim_user <> target_user
+    
+    // Find movies they watched
+    MATCH (sim_user)-[:WATCHED|:LIKED]->(movie:Movie)-[:BELONGS_TO]->(genre)
+    
+    // Ensure target user hasn't watched this movie
+    WHERE NOT (target_user)-[:WATCHED|:LIKED]->(movie)
+    
+    // Score: count of similar users who watched/liked it
+    WITH movie, count(DISTINCT sim_user) AS score
+    ORDER BY score DESC
+    LIMIT {limit}
+    
+    RETURN COLLECT({{
+        id: movie.id,
+        title: movie.title,
+        year: movie.year,
+        score: score
+    }}) AS recommendations
     """
-    with driver.session() as session:
-        session.run(
-        query,
-        pid=data["pid"].strip().upper(),
-        disease=data["disease"]
-    )
 
-    return {"status": "Disease linked successfully"}
+@app.route("/recommend/<user_id>", methods=["GET"])
+def recommend(user_id):
+    try:
+        uid = normalize_user_id(user_id)
+        limit = request.args.get("limit", 5, type=int)
 
-@app.route("/patient_insights/<pid>", methods=["GET"])
-def patient_insights(pid):
+        with driver.session(database=NEO4J_DATABASE) as session:
+            # Verify user exists
+            user_check = session.run(
+                "MATCH (u:User {id: $uid}) RETURN u",
+                uid=uid
+            ).single()
 
-    query = """
-    MATCH (p:Patient {id: toUpper(trim($pid))})
-    OPTIONAL MATCH (p)-[:HAS_DISEASE]->(d:Disease)
-    OPTIONAL MATCH (drug:Drug)-[:TREATS]->(d)
-    OPTIONAL MATCH (drug)-[:TARGETS]->(g:Gene)
-    RETURN
-        p.name AS patient_name,
-        p.id AS patient_id,
-        collect(DISTINCT d.name) AS diseases,
-        collect(DISTINCT drug.name) AS drugs,
-        collect(DISTINCT g.name) AS genes
-    """
-    with driver.session() as session:
-        record = session.run(query, pid=pid.strip()).single()
+            if not user_check:
+                return jsonify({"error": "User not found"}), 404
 
-    if not record:
-        return jsonify({"error": "Patient not found"}), 404
+            # Get recommendations
+            query = build_rating_weighted_recommendations(uid, limit)
+            result = session.run(query).single()
 
-    return jsonify({
-        "patient_id": record["patient_id"],
-        "patient_name": record["patient_name"],
-        "diseases": record["diseases"],
-        "drugs": record["drugs"],
-        "genes": record["genes"]
-    })
+        recommendations = result["recommendations"] if result else []
+        return jsonify({"user_id": uid, "recommendations": recommendations})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # --------------------
-# Graph API (FINAL & CORRECT)
+# Similar Users
+# --------------------
+@app.route("/similar_users/<user_id>", methods=["GET"])
+def similar_users(user_id):
+    try:
+        uid = normalize_user_id(user_id)
+
+        with driver.session(database=NEO4J_DATABASE) as session:
+            record = session.run(
+                """
+                MATCH (target_user:User {id: $uid})
+                OPTIONAL MATCH (target_user)-[:PREFERS]->(genre:Genre)<-[:PREFERS]-(similar:User)
+                WHERE similar <> target_user
+                WITH similar, count(DISTINCT genre) AS common_genres
+                ORDER BY common_genres DESC
+                LIMIT 10
+                RETURN collect({
+                    user_id: similar.id,
+                    user_name: similar.name,
+                    common_genres: common_genres
+                }) AS similar_users
+                """,
+                uid=uid,
+            ).single()
+
+        similar = record["similar_users"] if record else []
+        return jsonify({"user_id": uid, "similar_users": similar})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --------------------
+# Graph API
 # --------------------
 @app.route("/graph", methods=["GET"])
 def get_graph():
     try:
-        with driver.session() as session:
+        with driver.session(database=NEO4J_DATABASE) as session:
 
-            # 1️⃣ Fetch nodes
+            # Fetch nodes
             nodes_query = """
             MATCH (n)
             RETURN DISTINCT n
@@ -195,13 +351,10 @@ def get_graph():
                 n = record["n"]
                 label = list(n.labels)[0]
 
-                if label == "Patient":
-                    node_id = f"Patient:{n.get('id')}"
+                if label in ["User", "Movie"]:
+                    node_id = f"{label}:{n.get('id')}"
                 else:
                     node_id = f"{label}:{n.get('name')}"
-
-        
-
 
                 if not node_id or node_id in node_seen:
                     continue
@@ -209,11 +362,11 @@ def get_graph():
                 node_seen.add(node_id)
                 nodes.append({
                     "id": node_id,
-                    "label": list(n.labels)[0],
+                    "label": label,
                     "name": node_id
                 })
 
-            # 2️⃣ Fetch relationships
+            # Fetch relationships
             rels_query = """
             MATCH (a)-[r]->(b)
             RETURN DISTINCT a, r, b
@@ -230,15 +383,13 @@ def get_graph():
 
                 def node_key(n):
                     label = list(n.labels)[0]
-                    if label == "Patient":
-                        return f"Patient:{n.get('id').strip().upper()}"
+                    if label in ["User", "Movie"]:
+                        return f"{label}:{n.get('id')}"
                     else:
                         return f"{label}:{n.get('name')}"
 
-
                 source = node_key(a)
                 target = node_key(b)
-
 
                 if not source or not target:
                     continue
@@ -263,90 +414,48 @@ def get_graph():
         print("GRAPH ERROR:", e)
         return jsonify({"error": "Failed to load graph"}), 500
 
-
-
 # --------------------
-# Patient Diseases
+# Node Info
 # --------------------
-@app.route("/patient_diseases/<pid>")
-def get_patient_diseases(pid):
-    query = """
-    MATCH (p:Patient {id: $pid})-[:HAS_DISEASE]->(d:Disease)
-    RETURN d.name AS disease
-    """
-    result = run_query(query, {"pid": pid})
-    return jsonify(result)
+@app.route("/node_info/<node_id>", methods=["GET"])
+def node_info(node_id):
+    try:
+        with driver.session(database=NEO4J_DATABASE) as session:
+            # Extract label and id from node_id like "User:U001"
+            parts = node_id.split(":", 1)
+            if len(parts) != 2:
+                return jsonify({"error": "Invalid node_id format"}), 400
 
-@app.route("/similar_patients/<pid>", methods=["GET"])
-def get_similar_patients(pid):
-    print("🔍 Similar patients API called for:", pid)
+            label, nid = parts
 
-    query = """
-    MATCH (p:Patient {id: toUpper(trim($pid))})
-          -[:HAS_DISEASE]->(d)
-          <-[:HAS_DISEASE]-(other:Patient)
-    WHERE other.id <> p.id
-    RETURN DISTINCT other.id AS similar
-    """
+            if label in ["User", "Movie"]:
+                query = f"""
+                MATCH (n:{label} {{id: $nid}})
+                OPTIONAL MATCH (n)-[r]->(related)
+                RETURN n, collect({{type: type(r), target: related}}) AS relationships
+                """
+                result = session.run(query, nid=nid).single()
+            else:
+                query = f"""
+                MATCH (n:{label} {{name: $nid}})
+                OPTIONAL MATCH (n)-[r]->(related)
+                RETURN n, collect({{type: type(r), target: related}}) AS relationships
+                """
+                result = session.run(query, nid=nid).single()
 
-    with driver.session() as session:
-        result = session.run(query, pid=pid.strip())
-        similar = [r["similar"] for r in result]
+            if not result:
+                return jsonify({"error": "Node not found"}), 404
 
-    print("✅ Similar patients found:", similar)
+            return jsonify({
+                "node": dict(result["n"]),
+                "relationships": result["relationships"]
+            })
 
-    return jsonify({
-        "patient": pid,
-        "similar_patients": similar
-    })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-
-
-# --------------------
-# Run Server
-# --------------------
 if __name__ == "__main__":
     app.run(debug=True)
-
-
-@app.route("/node_info", methods=["GET"])
-def node_info():
-    node_id = request.args.get("id")
-    label = request.args.get("label")
-
-    # DRUG INFO
-    if label == "Drug":
-        query = """
-        MATCH (d:Drug {name:$name})
-        OPTIONAL MATCH (d)-[:TREATS]->(dis:Disease)
-        OPTIONAL MATCH (d)-[:TARGETS]->(g:Gene)
-        RETURN
-          collect(DISTINCT dis.name) AS diseases,
-          collect(DISTINCT g.name) AS genes
-        """
-        result = run_query(query, {"name": node_id})
-        return jsonify(result[0])
-
-    # PATIENT INFO
-    if label == "Patient":
-        query = """
-        MATCH (p:Patient {id: $pid})
-
-        OPTIONAL MATCH (p)-[:HAS_DISEASE]->(d:Disease)
-        OPTIONAL MATCH (drug:Drug)-[:TREATS]->(d)
-        OPTIONAL MATCH (d)-[:HAS_SYMPTOM]->(s:Symptom)
-        RETURN
-          p.age AS age,
-          p.gender AS gender,
-          p.notes AS notes,
-          collect(DISTINCT d.name) AS diseases,
-          collect(DISTINCT drug.name) AS drugs,
-          collect(DISTINCT s.name) AS symptoms
-        """
-        result = run_query(query, {"pid": node_id})
-        return jsonify(result[0])
-
-    return jsonify({})
 
 
 
