@@ -431,8 +431,16 @@ def get_graph():
 
                 if label in ["User", "Movie"]:
                     node_id = f"{label}:{n.get('id')}"
+                    # Get display name for User or Movie
+                    if label == "User":
+                        display_name = n.get('name', 'Unknown User')
+                        display_text = f"{node_id} - {display_name}"
+                    else:  # Movie
+                        display_name = n.get('title', 'Unknown Movie')
+                        display_text = f"{node_id} - {display_name}"
                 else:
                     node_id = f"{label}:{n.get('name')}"
+                    display_text = node_id
 
                 if not node_id or node_id in node_seen:
                     continue
@@ -441,7 +449,8 @@ def get_graph():
                 nodes.append({
                     "id": node_id,
                     "label": label,
-                    "name": node_id
+                    "name": display_text,
+                    "display_name": display_name if label in ["User", "Movie"] else n.get('name')
                 })
 
             # Fetch relationships
